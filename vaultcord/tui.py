@@ -66,7 +66,7 @@ class VaultCordTUI(App[None]):
         self.worker_control = WorkerControl()
         self.worker_task: asyncio.Task[None] | None = None
         self.current_guild_id: str | None = None
-        self.current_mode: str = MODE_ALL
+        self.selected_mode: str = MODE_ALL
 
         self.total = 0
         self.processed = 0
@@ -121,7 +121,8 @@ class VaultCordTUI(App[None]):
             "mode-links": MODE_LINKS,
             "mode-media": MODE_MEDIA,
         }
-        self.current_mode = mode_map.get(event.pressed.id or "", MODE_ALL)
+        pressed_id = event.pressed.id if event.pressed is not None else ""
+        self.selected_mode = mode_map.get(pressed_id, MODE_ALL)
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "start":
@@ -157,7 +158,7 @@ class VaultCordTUI(App[None]):
             return
 
         if retry_failed_only:
-            reset_count = self.service.retry_failed(guild_id=guild_input, mode=self.current_mode)
+            reset_count = self.service.retry_failed(guild_id=guild_input, mode=self.selected_mode)
             await self.event_queue.put(
                 {
                     "type": "log",
@@ -169,7 +170,7 @@ class VaultCordTUI(App[None]):
             prepare_result = await self.service.prepare_jobs(
                 self.session,
                 guild_id=guild_input,
-                mode=self.current_mode,
+                mode=self.selected_mode,
                 event_sink=self._emit_immediate,
             )
             await self.event_queue.put(
@@ -195,7 +196,7 @@ class VaultCordTUI(App[None]):
         self.worker_task = asyncio.create_task(
             worker.run(
                 guild_id=guild_input,
-                mode=self.current_mode,
+                mode=self.selected_mode,
                 retry_failed_only=retry_failed_only,
                 control=self.worker_control,
                 event_sink=self._emit_immediate,

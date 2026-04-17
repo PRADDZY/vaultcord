@@ -229,8 +229,10 @@ def tui() -> None:
 
         app_ui = VaultCordTUI(service=runtime.service, session=session, config=runtime.config)
         app_ui.run()
-    except Exception:
-        _exit_with_error("Unable to launch TUI. Validate credentials and local config.")
+    except Exception as exc:
+        _exit_with_error(
+            f"Unable to launch TUI ({type(exc).__name__}). Validate credentials and local config."
+        )
 
 
 if __name__ == "__main__":
