@@ -80,9 +80,18 @@ class ScrubWorker:
                     retry_failed_only=retry_failed_only,
                 )
                 if not job:
-                    progress = self.store.get_progress(guild_id=guild_id, mode=mode)
+                    progress = self.store.get_progress(
+                        guild_id=guild_id,
+                        mode=mode,
+                        max_attempts=self.max_retries,
+                    )
                     event_sink({"type": "progress", **progress, "elapsed_seconds": int(perf_counter() - start)})
-                    if progress["remaining"] == 0:
+                    if not self.store.has_retryable_work(
+                        guild_id=guild_id,
+                        mode=mode,
+                        max_attempts=self.max_retries,
+                        retry_failed_only=retry_failed_only,
+                    ):
                         break
                     await self._sleep_with_stop(5, control)
                     continue
@@ -143,7 +152,11 @@ class ScrubWorker:
                 finally:
                     self.store.release_job_lease(job.id)
 
-                progress = self.store.get_progress(guild_id=guild_id, mode=mode)
+                progress = self.store.get_progress(
+                    guild_id=guild_id,
+                    mode=mode,
+                    max_attempts=self.max_retries,
+                )
                 event_sink({"type": "progress", **progress, "elapsed_seconds": int(perf_counter() - start)})
                 delay = random.randint(
                     self.scheduler.edit_delay_min_seconds,

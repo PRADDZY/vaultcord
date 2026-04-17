@@ -280,7 +280,43 @@ class VaultStore:
             cursor = conn.execute(query, (STATUS_PENDING, now, now, *params))
         return int(cursor.rowcount)
 
-    def get_progress(self, *, guild_id: str | None = None, mode: str | None = None) -> dict[str, int]:
+    def has_retryable_work(
+        self,
+        *,
+        guild_id: str | None = None,
+        mode: str | None = None,
+        max_attempts: int,
+        retry_failed_only: bool = False,
+    ) -> bool:
+        where: list[str] = ["attempts < ?"]
+        params: list[Any] = [max_attempts]
+        if retry_failed_only:
+            where.append("status = ?")
+            params.append(STATUS_FAILED)
+        else:
+            where.append("status IN (?, ?)")
+            params.extend([STATUS_PENDING, STATUS_FAILED])
+        if guild_id:
+            where.append("guild_id = ?")
+            params.append(guild_id)
+        if mode:
+            where.append("mode = ?")
+            params.append(mode)
+
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT 1 FROM jobs WHERE {' AND '.join(where)} LIMIT 1",
+                params,
+            ).fetchone()
+        return bool(row)
+
+    def get_progress(
+        self,
+        *,
+        guild_id: str | None = None,
+        mode: str | None = None,
+        max_attempts: int | None = None,
+    ) -> dict[str, int]:
         where = []
         params: list[Any] = []
         if guild_id:
@@ -297,15 +333,39 @@ class VaultStore:
                 f"SELECT COUNT(*) AS c FROM jobs {suffix} {'AND' if suffix else 'WHERE'} status = ?",
                 (*params, STATUS_DONE),
             ).fetchone()["c"]
-            failed = conn.execute(
+            if max_attempts is None:
+                failed = conn.execute(
+                    f"SELECT COUNT(*) AS c FROM jobs {suffix} {'AND' if suffix else 'WHERE'} status = ?",
+                    (*params, STATUS_FAILED),
+                ).fetchone()["c"]
+                retryable = 0
+            else:
+                failed = conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS c FROM jobs
+                    {suffix} {'AND' if suffix else 'WHERE'}
+                    status = ? AND attempts >= ?
+                    """,
+                    (*params, STATUS_FAILED, max_attempts),
+                ).fetchone()["c"]
+                retryable = conn.execute(
+                    f"""
+                    SELECT COUNT(*) AS c FROM jobs
+                    {suffix} {'AND' if suffix else 'WHERE'}
+                    status = ? AND attempts < ?
+                    """,
+                    (*params, STATUS_FAILED, max_attempts),
+                ).fetchone()["c"]
+            pending = conn.execute(
                 f"SELECT COUNT(*) AS c FROM jobs {suffix} {'AND' if suffix else 'WHERE'} status = ?",
-                (*params, STATUS_FAILED),
+                (*params, STATUS_PENDING),
             ).fetchone()["c"]
         return {
             "total": int(total),
             "done": int(done),
             "failed": int(failed),
-            "remaining": max(int(total) - int(done) - int(failed), 0),
+            "retryable_failed": int(retryable),
+            "remaining": int(pending) + int(retryable),
         }
 
     def get_encrypted_message(self, vault_id: str) -> dict[str, Any] | None:

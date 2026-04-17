@@ -33,6 +33,10 @@ def default_log_path() -> Path:
     return default_data_dir() / LOG_FILE_NAME
 
 
+def _expand_path(value: str) -> str:
+    return str(Path(value).expanduser())
+
+
 def _default_config() -> dict:
     scheduler = SchedulerConfig()
     return {
@@ -70,9 +74,9 @@ def load_config() -> AppConfig:
     )
 
     return AppConfig(
-        data_dir=str(raw.get("data_dir", default_data_dir())),
-        db_path=str(raw.get("db_path", default_db_path())),
-        log_path=str(raw.get("log_path", default_log_path())),
+        data_dir=_expand_path(str(raw.get("data_dir", default_data_dir()))),
+        db_path=_expand_path(str(raw.get("db_path", default_db_path()))),
+        log_path=_expand_path(str(raw.get("log_path", default_log_path()))),
         request_timeout_seconds=float(raw.get("request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT)),
         max_retries=int(raw.get("max_retries", DEFAULT_MAX_RETRIES)),
         scheduler=scheduler_config,

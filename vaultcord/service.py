@@ -168,4 +168,8 @@ class VaultService:
         return self.store.reset_failed_jobs(guild_id=guild_id, mode=mode)
 
     def progress(self, guild_id: str | None, mode: str | None) -> dict[str, int]:
-        return self.store.get_progress(guild_id=guild_id, mode=mode)
+        return self.store.get_progress(
+            guild_id=guild_id,
+            mode=mode,
+            max_attempts=self.config.max_retries,
+        )
