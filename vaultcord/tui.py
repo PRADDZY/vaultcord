@@ -43,6 +43,7 @@ class VaultCordTUI(App[None]):
         width: 33;
         border: round #666666;
         padding: 1;
+        overflow-y: auto;
     }
 
     #right-panel {
@@ -52,7 +53,7 @@ class VaultCordTUI(App[None]):
     }
 
     #logs {
-        height: 14;
+        height: 10;
         border: round #666666;
         margin-top: 1;
     }
@@ -89,10 +90,6 @@ class VaultCordTUI(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static("VaultCord | Status: Idle", id="status-line")
-        yield Static(
-            "Paste Server ID, then Start. Shortcuts: i=server-id s=start p=pause r=resume x=stop g=get.",
-            id="help-line",
-        )
 
         with RadioSet(id="mode-selector"):
             yield RadioButton("All", value=True, id="mode-all")
@@ -103,8 +100,7 @@ class VaultCordTUI(App[None]):
         with Horizontal(id="main"):
             with Vertical(id="left-panel"):
                 yield Static("Controls")
-                yield Static("Server ID (Guild ID)")
-                yield Input(placeholder="Paste server id here", id="guild-id")
+                yield Input(placeholder="Server ID (Guild ID)", id="guild-id")
                 yield Input(placeholder="Vault ID (for retrieval)", id="vault-id")
                 yield Button("Start", id="start", variant="success", classes="action")
                 yield Button("Pause", id="pause", variant="warning", classes="action")
