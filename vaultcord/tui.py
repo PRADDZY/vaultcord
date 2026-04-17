@@ -43,13 +43,31 @@ class VaultCordTUI(App[None]):
         layout: vertical;
     }
 
+    #top-strip {
+        height: 2;
+        content-align: left middle;
+        padding-left: 1;
+    }
+
+    #top-help {
+        color: #aaaaaa;
+    }
+
+    #mode-selector {
+        margin: 0 1;
+        padding: 0 1;
+        border: round #555555;
+        height: 3;
+    }
+
     #main {
         layout: horizontal;
         height: 1fr;
+        margin: 0 1;
     }
 
     #left-panel {
-        width: 33;
+        width: 44;
         border: round #666666;
         padding: 1;
         overflow-y: auto;
@@ -61,17 +79,46 @@ class VaultCordTUI(App[None]):
         padding: 1;
     }
 
-    #logs {
-        height: 10;
-        border: round #666666;
+    .section {
+        color: #6ec1ff;
+        text-style: bold;
         margin-top: 1;
+    }
+
+    .field-label {
+        color: #8e8e8e;
+        margin-top: 1;
+    }
+
+    .btn-row {
+        layout: horizontal;
+        margin-top: 1;
+    }
+
+    .btn-row Button {
+        width: 1fr;
+        margin-right: 1;
+    }
+
+    .btn-row Button:last-child {
+        margin-right: 0;
+    }
+
+    #logs {
+        height: 12;
+        border: round #666666;
+        margin: 1 1 0 1;
     }
 
     .stat {
         height: 1;
+        margin-top: 1;
     }
 
-    .action {
+    #retrieval-output {
+        height: 3;
+        border: round #444444;
+        padding: 0 1;
         margin-top: 1;
     }
     """
@@ -99,7 +146,12 @@ class VaultCordTUI(App[None]):
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
-        yield Static("VaultCord | Status: Idle", id="status-line")
+        with Vertical(id="top-strip"):
+            yield Static("VaultCord | Status: Idle", id="status-line")
+            yield Static(
+                "Tip: paste Server ID -> choose mode/order -> Start (s). Pause(p), Resume(r), Stop(x).",
+                id="top-help",
+            )
 
         with RadioSet(id="mode-selector"):
             yield RadioButton("All", value=True, id="mode-all")
@@ -109,22 +161,28 @@ class VaultCordTUI(App[None]):
 
         with Horizontal(id="main"):
             with Vertical(id="left-panel"):
-                yield Static("Controls")
-                yield Input(placeholder="Server ID (Guild ID)", id="guild-id")
-                yield Input(placeholder="Vault ID (for retrieval)", id="vault-id")
+                yield Static("Run Controls", classes="section")
+                yield Static("Server ID (Guild ID)", classes="field-label")
+                yield Input(placeholder="Paste server id here", id="guild-id")
+                yield Static("Message Retrieval (Vault ID)", classes="field-label")
+                yield Input(placeholder="Paste vault id", id="vault-id")
+                yield Static("Order", classes="field-label")
                 with RadioSet(id="order-selector"):
                     yield RadioButton("Newest first", value=True, id="order-newest")
                     yield RadioButton("Oldest first", id="order-oldest")
-                yield Button("Start", id="start", variant="success", classes="action")
-                yield Button("Pause", id="pause", variant="warning", classes="action")
-                yield Button("Resume", id="resume", variant="primary", classes="action")
-                yield Button("Stop", id="stop", variant="error", classes="action")
-                yield Button("Get Message", id="get-vault", variant="default", classes="action")
+                with Horizontal(classes="btn-row"):
+                    yield Button("Start", id="start", variant="success")
+                    yield Button("Pause", id="pause", variant="warning")
+                with Horizontal(classes="btn-row"):
+                    yield Button("Resume", id="resume", variant="primary")
+                    yield Button("Stop", id="stop", variant="error")
+                with Horizontal(classes="btn-row"):
+                    yield Button("Get Message", id="get-vault", variant="default")
                 yield Checkbox("Dry Run", id="dry-run")
                 yield Checkbox("Retry Failed Only", id="retry-only")
 
             with Vertical(id="right-panel"):
-                yield Static("Progress & Stats")
+                yield Static("Progress & Stats", classes="section")
                 yield Static("Total: 0", id="stat-total", classes="stat")
                 yield Static("Processed: 0", id="stat-processed", classes="stat")
                 yield Static("Remaining: 0", id="stat-remaining", classes="stat")
@@ -134,7 +192,7 @@ class VaultCordTUI(App[None]):
                 yield ProgressBar(total=100, id="progress")
                 yield Static("Retrieved: (none)", id="retrieval-output")
 
-        yield RichLog(id="logs", wrap=False, highlight=False, markup=False, auto_scroll=True, max_lines=4000)
+        yield RichLog(id="logs", wrap=True, highlight=False, markup=False, auto_scroll=True, max_lines=5000)
         yield Footer()
 
     def on_mount(self) -> None:
