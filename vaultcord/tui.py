@@ -6,6 +6,7 @@ import asyncio
 from typing import Any
 
 from textual.app import App, ComposeResult
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Checkbox, Footer, Header, Input, ProgressBar, RadioButton, RadioSet, RichLog, Static
@@ -17,6 +18,14 @@ from .worker import ScrubWorker, WorkerControl
 
 
 class VaultCordTUI(App[None]):
+    BINDINGS = [
+        Binding("s", "start_job", "Start"),
+        Binding("p", "pause_job", "Pause"),
+        Binding("r", "resume_job", "Resume"),
+        Binding("x", "stop_job", "Stop"),
+        Binding("g", "get_message", "Get Message"),
+    ]
+
     CSS = """
     Screen {
         layout: vertical;
@@ -77,6 +86,10 @@ class VaultCordTUI(App[None]):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
         yield Static("VaultCord | Status: Idle", id="status-line")
+        yield Static(
+            "Enter Guild ID, then Start. Shortcuts: s=start p=pause r=resume x=stop g=get.",
+            id="help-line",
+        )
 
         with RadioSet(id="mode-selector"):
             yield RadioButton("All", value=True, id="mode-all")
@@ -113,6 +126,17 @@ class VaultCordTUI(App[None]):
 
     def on_mount(self) -> None:
         self.set_interval(0.2, self._drain_events)
+        self.query_one("#guild-id", Input).focus()
+        self.event_queue.put_nowait(
+            {
+                "type": "log",
+                "level": "INFO",
+                "message": (
+                    "Ready. Paste Guild ID, choose mode, then press Start "
+                    "(or hit 's')."
+                ),
+            }
+        )
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
         mode_map = {
@@ -136,6 +160,24 @@ class VaultCordTUI(App[None]):
         elif event.button.id == "get-vault":
             await self._handle_get_vault()
 
+    async def action_start_job(self) -> None:
+        await self._handle_start()
+
+    async def action_pause_job(self) -> None:
+        self.worker_control.pause_event.set()
+        await self.event_queue.put({"type": "log", "level": "INFO", "message": "Pause requested"})
+
+    async def action_resume_job(self) -> None:
+        self.worker_control.pause_event.clear()
+        await self.event_queue.put({"type": "log", "level": "INFO", "message": "Resume requested"})
+
+    async def action_stop_job(self) -> None:
+        self.worker_control.stop_event.set()
+        await self.event_queue.put({"type": "log", "level": "INFO", "message": "Stop requested"})
+
+    async def action_get_message(self) -> None:
+        await self._handle_get_vault()
+
     async def _handle_start(self) -> None:
         if self.worker_task and not self.worker_task.done():
             await self.event_queue.put({"type": "log", "level": "SKIP", "message": "Worker is already running"})
@@ -143,7 +185,13 @@ class VaultCordTUI(App[None]):
 
         guild_input = self.query_one("#guild-id", Input).value.strip()
         if not guild_input:
-            await self.event_queue.put({"type": "log", "level": "FAIL", "message": "Guild ID is required"})
+            await self.event_queue.put(
+                {
+                    "type": "log",
+                    "level": "FAIL",
+                    "message": "Guild ID is required. Enable Developer Mode in Discord and copy server ID.",
+                }
+            )
             return
 
         self.current_guild_id = guild_input

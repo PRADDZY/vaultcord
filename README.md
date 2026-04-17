@@ -101,6 +101,12 @@ vault get <vault_id>
 vault tui
 ```
 
+TUI start flow:
+
+- Paste `Guild ID` in the left panel
+- Select mode (`All/Text/Links/Media`)
+- Press `Start` (or keyboard shortcut `s`)
+
 ## Worker Behavior
 
 - Random edit delay: 15-25 seconds
