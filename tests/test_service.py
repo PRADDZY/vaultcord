@@ -72,3 +72,28 @@ def test_decrypt_vault_message(tmp_path: Path) -> None:
     assert vault_id is not None
     data = service.decrypt_vault_message(vault_id=vault_id, password="pw")
     assert data["content"] == "hello world"
+
+
+def test_has_retryable_queue_detects_existing_work(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    inserted = service.store.insert_archived_message(
+        vault_id="id-queue",
+        discord_message_id="m-queue",
+        channel_id="c1",
+        guild_id="g1",
+        author_id="u1",
+        mode="all",
+        reference_text="vault://id-queue",
+        encrypted_payload={"ciphertext_b64": "a", "nonce_b64": "b", "salt_b64": "c"},
+    )
+    assert inserted
+    enqueued = service.store.enqueue_job(
+        discord_message_id="m-queue",
+        channel_id="c1",
+        guild_id="g1",
+        mode="all",
+        vault_id="id-queue",
+        priority=None,
+    )
+    assert enqueued
+    assert service.has_retryable_queue(guild_id="g1", mode="all")
