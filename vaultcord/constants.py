@@ -26,5 +26,9 @@ MODE_LINKS: Final[str] = "links"
 MODE_MEDIA: Final[str] = "media"
 VALID_MODES: Final[set[str]] = {MODE_ALL, MODE_TEXT, MODE_LINKS, MODE_MEDIA}
 
+ORDER_NEWEST: Final[str] = "newest"
+ORDER_OLDEST: Final[str] = "oldest"
+VALID_ORDER_DIRECTIONS: Final[set[str]] = {ORDER_NEWEST, ORDER_OLDEST}
+
 CHANNEL_TEXT_TYPES: Final[set[int]] = {0, 5}
 CHANNEL_THREAD_TYPES: Final[set[int]] = {10, 11, 12}

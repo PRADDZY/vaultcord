@@ -13,7 +13,14 @@ from textual.containers import Horizontal, Vertical
 from textual.reactive import reactive
 from textual.widgets import Button, Checkbox, Footer, Header, Input, ProgressBar, RadioButton, RadioSet, RichLog, Static
 
-from .constants import MODE_ALL, MODE_LINKS, MODE_MEDIA, MODE_TEXT
+from .constants import (
+    MODE_ALL,
+    MODE_LINKS,
+    MODE_MEDIA,
+    MODE_TEXT,
+    ORDER_NEWEST,
+    ORDER_OLDEST,
+)
 from .models import AppConfig, VaultSession
 from .service import VaultService
 from .worker import ScrubWorker, WorkerControl
@@ -82,6 +89,7 @@ class VaultCordTUI(App[None]):
         self.worker_task: asyncio.Task[None] | None = None
         self.current_guild_id: str | None = None
         self.selected_mode: str = MODE_ALL
+        self.selected_order: str = ORDER_NEWEST
 
         self.total = 0
         self.processed = 0
@@ -104,6 +112,9 @@ class VaultCordTUI(App[None]):
                 yield Static("Controls")
                 yield Input(placeholder="Server ID (Guild ID)", id="guild-id")
                 yield Input(placeholder="Vault ID (for retrieval)", id="vault-id")
+                with RadioSet(id="order-selector"):
+                    yield RadioButton("Newest first", value=True, id="order-newest")
+                    yield RadioButton("Oldest first", id="order-oldest")
                 yield Button("Start", id="start", variant="success", classes="action")
                 yield Button("Pause", id="pause", variant="warning", classes="action")
                 yield Button("Resume", id="resume", variant="primary", classes="action")
@@ -129,26 +140,33 @@ class VaultCordTUI(App[None]):
     def on_mount(self) -> None:
         self.set_interval(0.2, self._drain_events)
         self.query_one("#guild-id", Input).focus()
+        self._load_tui_preferences()
         self.event_queue.put_nowait(
             {
                 "type": "log",
                 "level": "INFO",
                 "message": (
-                    "Ready. Paste Guild ID, choose mode, then press Start "
+                    "Ready. Paste Server ID, choose mode/order, then press Start "
                     "(or hit 's')."
                 ),
             }
         )
 
     def on_radio_set_changed(self, event: RadioSet.Changed) -> None:
-        mode_map = {
-            "mode-all": MODE_ALL,
-            "mode-text": MODE_TEXT,
-            "mode-links": MODE_LINKS,
-            "mode-media": MODE_MEDIA,
-        }
         pressed_id = event.pressed.id if event.pressed is not None else ""
-        self.selected_mode = mode_map.get(pressed_id, MODE_ALL)
+        radio_set = getattr(event, "radio_set", None)
+        radio_set_id = radio_set.id if radio_set is not None else ""
+
+        if radio_set_id == "mode-selector":
+            mode_map = {
+                "mode-all": MODE_ALL,
+                "mode-text": MODE_TEXT,
+                "mode-links": MODE_LINKS,
+                "mode-media": MODE_MEDIA,
+            }
+            self.selected_mode = mode_map.get(pressed_id, MODE_ALL)
+        elif radio_set_id == "order-selector":
+            self.selected_order = ORDER_OLDEST if pressed_id == "order-oldest" else ORDER_NEWEST
 
     async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "start":
@@ -205,6 +223,7 @@ class VaultCordTUI(App[None]):
         self.current_guild_id = guild_input
         dry_run = self.query_one("#dry-run", Checkbox).value
         retry_failed_only = self.query_one("#retry-only", Checkbox).value
+        self._save_tui_preferences()
 
         self.worker_control = WorkerControl()
 
@@ -213,7 +232,10 @@ class VaultCordTUI(App[None]):
                 {
                     "type": "log",
                     "level": "INFO",
-                    "message": f"Dry run started for guild={guild_input} mode={self.selected_mode}",
+                    "message": (
+                        f"Dry run started for guild={guild_input} "
+                        f"mode={self.selected_mode} order={self.selected_order}"
+                    ),
                 }
             )
             counts = await self.service.preview_counts(self.session, guild_input)
@@ -225,7 +247,10 @@ class VaultCordTUI(App[None]):
                 {
                     "type": "log",
                     "level": "INFO",
-                    "message": f"Retry-failed run started for guild={guild_input} mode={self.selected_mode}",
+                    "message": (
+                        f"Retry-failed run started for guild={guild_input} "
+                        f"mode={self.selected_mode} order={self.selected_order}"
+                    ),
                 }
             )
             reset_count = self.service.retry_failed(guild_id=guild_input, mode=self.selected_mode)
@@ -237,30 +262,46 @@ class VaultCordTUI(App[None]):
                 }
             )
         else:
-            await self.event_queue.put(
-                {
-                    "type": "log",
-                    "level": "INFO",
-                    "message": f"Scrub run started for guild={guild_input} mode={self.selected_mode}",
-                }
-            )
-            prepare_result = await self.service.prepare_jobs(
-                self.session,
-                guild_id=guild_input,
-                mode=self.selected_mode,
-                event_sink=self._emit_immediate,
-            )
-            await self.event_queue.put(
-                {
-                    "type": "log",
-                    "level": "OK",
-                    "message": (
-                        "Prepared queue "
-                        f"queued={prepare_result.queued} skipped={prepare_result.skipped} "
-                        f"already_ref={prepare_result.already_referenced}"
-                    ),
-                }
-            )
+            if self.service.has_retryable_queue(guild_id=guild_input, mode=self.selected_mode):
+                await self.event_queue.put(
+                    {
+                        "type": "log",
+                        "level": "INFO",
+                        "message": (
+                            f"Resume queue-first for guild={guild_input} "
+                            f"mode={self.selected_mode} order={self.selected_order}"
+                        ),
+                    }
+                )
+            else:
+                await self.event_queue.put(
+                    {
+                        "type": "log",
+                        "level": "INFO",
+                        "message": (
+                            f"Scrub run started for guild={guild_input} "
+                            f"mode={self.selected_mode} order={self.selected_order}"
+                        ),
+                    }
+                )
+                prepare_result = await self.service.prepare_jobs(
+                    self.session,
+                    guild_id=guild_input,
+                    mode=self.selected_mode,
+                    order_direction=self.selected_order,
+                    event_sink=self._emit_immediate,
+                )
+                await self.event_queue.put(
+                    {
+                        "type": "log",
+                        "level": "OK",
+                        "message": (
+                            "Prepared queue "
+                            f"queued={prepare_result.queued} skipped={prepare_result.skipped} "
+                            f"already_ref={prepare_result.already_referenced}"
+                        ),
+                    }
+                )
 
         worker = ScrubWorker(
             store=self.service.store,
@@ -275,6 +316,7 @@ class VaultCordTUI(App[None]):
                 guild_id=guild_input,
                 mode=self.selected_mode,
                 retry_failed_only=retry_failed_only,
+                order_direction=self.selected_order,
                 control=self.worker_control,
                 event_sink=self._emit_immediate,
             )
@@ -310,8 +352,12 @@ class VaultCordTUI(App[None]):
             if event["type"] == "status":
                 self.status = str(event["status"]).capitalize()
                 self.query_one("#status-line", Static).update(f"VaultCord | Status: {self.status}")
+                if event.get("status") in {"idle", "completed"}:
+                    self.worker_task = None
             elif event["type"] == "progress":
                 self._update_progress(event)
+            elif event["type"] == "completed":
+                self._handle_completed(event)
             elif event["type"] == "log":
                 log_widget = self.query_one("#logs", RichLog)
                 level = str(event.get("level", "INFO"))
@@ -347,6 +393,45 @@ class VaultCordTUI(App[None]):
             eta_hours = self.remaining / rate
             eta = f"{eta_hours:.2f}h"
         self.query_one("#stat-eta", Static).update(f"ETA: {eta}")
+
+    def _handle_completed(self, payload: dict[str, Any]) -> None:
+        done = int(payload.get("done", 0))
+        failed = int(payload.get("failed", 0))
+        remaining = int(payload.get("remaining", 0))
+        elapsed_seconds = int(payload.get("elapsed_seconds", 0))
+        message = (
+            f"Run completed: processed={done} failed={failed} "
+            f"remaining={remaining} elapsed={elapsed_seconds}s"
+        )
+        self.query_one("#logs", RichLog).write(self._render_log("OK", message))
+        if failed > 0:
+            self.query_one("#logs", RichLog).write(
+                self._render_log("INFO", "Use Retry Failed to requeue failed items.")
+            )
+        self.status = "Completed"
+        self.query_one("#status-line", Static).update("VaultCord | Status: Completed")
+
+    def _load_tui_preferences(self) -> None:
+        try:
+            payload = self.service.store.read_setting("tui_preferences") or {}
+            order_direction = str(payload.get("order_direction", ORDER_NEWEST))
+            if order_direction == ORDER_OLDEST:
+                self.selected_order = ORDER_OLDEST
+                order_radio = self.query_one("#order-oldest", RadioButton)
+                order_radio.value = True
+        except Exception:
+            self.selected_order = ORDER_NEWEST
+
+    def _save_tui_preferences(self) -> None:
+        try:
+            self.service.store.save_setting(
+                "tui_preferences",
+                {
+                    "order_direction": self.selected_order,
+                },
+            )
+        except Exception:
+            return
 
     def _render_log(self, level: str, message: str) -> Text:
         ts = datetime.now().strftime("%H:%M:%S")

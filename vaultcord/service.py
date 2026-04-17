@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from .constants import MODE_ALL, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, VAULT_PREFIX
+from .constants import MODE_ALL, ORDER_NEWEST, ORDER_OLDEST, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, VAULT_PREFIX
 from .discord_api import DiscordClient, DiscordApiError
 from .editor import generate_vault_id, make_reference
 from .models import AppConfig, VaultSession
@@ -81,8 +81,11 @@ class VaultService:
         *,
         guild_id: str,
         mode: str,
+        order_direction: str = ORDER_NEWEST,
         event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> PrepareResult:
+        if order_direction not in {ORDER_NEWEST, ORDER_OLDEST}:
+            raise ValueError(f"Unsupported order direction: {order_direction}")
         queued = 0
         skipped = 0
         already_referenced = 0
@@ -138,6 +141,7 @@ class VaultService:
                     guild_id=message.guild_id,
                     mode=mode,
                     vault_id=vault_id,
+                    priority=self._message_priority(message.message_id),
                     status=STATUS_PENDING,
                 )
                 queued += 1
@@ -150,6 +154,13 @@ class VaultService:
                     })
 
         return PrepareResult(queued=queued, skipped=skipped, already_referenced=already_referenced)
+
+    @staticmethod
+    def _message_priority(message_id: str) -> int | None:
+        try:
+            return int(message_id)
+        except (TypeError, ValueError):
+            return None
 
     def decrypt_vault_message(self, vault_id: str, password: str) -> dict[str, Any]:
         encrypted = self.store.get_encrypted_message(vault_id)
@@ -166,6 +177,14 @@ class VaultService:
 
     def retry_failed(self, guild_id: str | None, mode: str | None) -> int:
         return self.store.reset_failed_jobs(guild_id=guild_id, mode=mode)
+
+    def has_retryable_queue(self, guild_id: str | None, mode: str | None) -> bool:
+        return self.store.has_retryable_work(
+            guild_id=guild_id,
+            mode=mode,
+            max_attempts=self.config.max_retries,
+            retry_failed_only=False,
+        )
 
     def progress(self, guild_id: str | None, mode: str | None) -> dict[str, int]:
         return self.store.get_progress(

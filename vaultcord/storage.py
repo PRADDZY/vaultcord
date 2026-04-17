@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Iterator
 
+from .constants import ORDER_NEWEST, ORDER_OLDEST
 from .constants import STATUS_DONE, STATUS_FAILED, STATUS_PENDING
 from .models import QueueJob
 
@@ -69,6 +70,7 @@ class VaultStore:
                     next_attempt_at TEXT,
                     last_error TEXT,
                     vault_id TEXT NOT NULL,
+                    priority INTEGER,
                     leased_until TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
@@ -79,6 +81,20 @@ class VaultStore:
                 ON jobs(status, next_attempt_at);
                 """
             )
+            self._ensure_column(conn, table_name="jobs", column_name="priority", column_type="INTEGER")
+
+    @staticmethod
+    def _ensure_column(
+        conn: sqlite3.Connection,
+        *,
+        table_name: str,
+        column_name: str,
+        column_type: str,
+    ) -> None:
+        rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+        existing = {str(row["name"]) for row in rows}
+        if column_name not in existing:
+            conn.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_type}")
 
     def save_setting(self, key: str, value: dict[str, Any]) -> None:
         now = utc_now_iso()
@@ -152,6 +168,7 @@ class VaultStore:
         guild_id: str | None,
         mode: str,
         vault_id: str,
+        priority: int | None,
         status: str = STATUS_PENDING,
     ) -> bool:
         now = utc_now_iso()
@@ -160,9 +177,9 @@ class VaultStore:
                 """
                 INSERT OR IGNORE INTO jobs(
                     discord_message_id, channel_id, guild_id, mode, status,
-                    attempts, next_attempt_at, last_error, vault_id,
+                    attempts, next_attempt_at, last_error, vault_id, priority,
                     leased_until, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 0, ?, NULL, ?, NULL, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, 0, ?, NULL, ?, ?, NULL, ?, ?)
                 """,
                 (
                     discord_message_id,
@@ -172,16 +189,26 @@ class VaultStore:
                     status,
                     now,
                     vault_id,
+                    priority,
                     now,
                     now,
                 ),
             )
         return cursor.rowcount == 1
 
-    def claim_next_job(self, *, max_attempts: int, retry_failed_only: bool = False) -> QueueJob | None:
+    def claim_next_job(
+        self,
+        *,
+        max_attempts: int,
+        retry_failed_only: bool = False,
+        order_direction: str = ORDER_NEWEST,
+    ) -> QueueJob | None:
         now = datetime.now(UTC)
         now_iso = now.isoformat()
         stale_lease_iso = now.isoformat()
+        priority_order = "DESC" if order_direction == ORDER_NEWEST else "ASC"
+        if order_direction not in {ORDER_NEWEST, ORDER_OLDEST}:
+            raise ValueError(f"Unsupported order direction: {order_direction}")
         with self._connect() as conn:
             if retry_failed_only:
                 where = "status = ?"
@@ -197,7 +224,10 @@ class VaultStore:
                   AND attempts < ?
                   AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
                   AND (leased_until IS NULL OR leased_until <= ?)
-                ORDER BY updated_at ASC
+                ORDER BY
+                    CASE WHEN priority IS NULL THEN 1 ELSE 0 END ASC,
+                    priority {priority_order},
+                    updated_at ASC
                 LIMIT 1
                 """,
                 (*params, max_attempts, now_iso, stale_lease_iso),

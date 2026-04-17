@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from vaultcord.constants import ORDER_NEWEST, ORDER_OLDEST
 from vaultcord.constants import STATUS_DONE, STATUS_FAILED
 from vaultcord.storage import VaultStore
 
@@ -28,6 +29,7 @@ def test_insert_and_claim_job(tmp_path: Path) -> None:
         guild_id="g1",
         mode="all",
         vault_id="id1",
+        priority=None,
     )
     assert enqueued
 
@@ -58,6 +60,7 @@ def test_failed_reset(tmp_path: Path) -> None:
         guild_id="g1",
         mode="links",
         vault_id="id2",
+        priority=None,
         status=STATUS_FAILED,
     )
 
@@ -99,6 +102,7 @@ def test_retryable_failed_is_still_remaining(tmp_path: Path) -> None:
         guild_id="g1",
         mode="all",
         vault_id="id3",
+        priority=None,
     )
 
     job = store.claim_next_job(max_attempts=3)
@@ -110,3 +114,37 @@ def test_retryable_failed_is_still_remaining(tmp_path: Path) -> None:
     assert progress["retryable_failed"] == 1
     assert progress["remaining"] == 1
     assert store.has_retryable_work(guild_id="g1", mode="all", max_attempts=3)
+
+
+def test_claim_next_job_respects_order_direction(tmp_path: Path) -> None:
+    store = build_store(tmp_path)
+    for vault_id, msg_id in [("id4", "100"), ("id5", "200")]:
+        store.insert_archived_message(
+            vault_id=vault_id,
+            discord_message_id=msg_id,
+            channel_id="c1",
+            guild_id="g1",
+            author_id="u1",
+            mode="all",
+            reference_text=f"vault://{vault_id}",
+            encrypted_payload={"ciphertext_b64": "a", "nonce_b64": "b", "salt_b64": "c"},
+        )
+        store.enqueue_job(
+            discord_message_id=msg_id,
+            channel_id="c1",
+            guild_id="g1",
+            mode="all",
+            vault_id=vault_id,
+            priority=int(msg_id),
+        )
+
+    newest = store.claim_next_job(max_attempts=3, order_direction=ORDER_NEWEST)
+    assert newest is not None
+    assert newest.discord_message_id == "200"
+
+    store.release_job_lease(newest.id)
+    store.mark_job_done(newest.id)
+
+    oldest = store.claim_next_job(max_attempts=3, order_direction=ORDER_OLDEST)
+    assert oldest is not None
+    assert oldest.discord_message_id == "100"

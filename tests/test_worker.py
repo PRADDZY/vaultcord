@@ -67,12 +67,14 @@ def test_worker_marks_jobs_done(tmp_path: Path) -> None:
         guild_id="g1",
         mode="all",
         vault_id="id1",
+        priority=None,
     )
 
     events = asyncio.run(_run_worker(store))
     progress = store.get_progress(guild_id="g1", mode="all")
     assert progress["done"] == 1
     assert any(event.get("type") == "log" for event in events)
+    assert any(event.get("type") == "completed" for event in events)
 
 
 def test_worker_non_retryable_error_fails_terminally(tmp_path: Path) -> None:
@@ -93,6 +95,7 @@ def test_worker_non_retryable_error_fails_terminally(tmp_path: Path) -> None:
         guild_id="g1",
         mode="all",
         vault_id="id2",
+        priority=None,
     )
 
     session = VaultSession(user_id="u1", username="u", token="tok", password="pw")
@@ -154,6 +157,7 @@ def test_worker_retryable_429_uses_retry_after_delay(tmp_path: Path) -> None:
         guild_id="g1",
         mode="all",
         vault_id="id3",
+        priority=None,
     )
 
     session = VaultSession(user_id="u1", username="u", token="tok", password="pw")

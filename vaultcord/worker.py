@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from time import perf_counter
 from typing import Any, Callable
 
+from .constants import ORDER_NEWEST
 from .discord_api import DiscordApiError, DiscordClient
 from .editor import apply_vault_reference
 from .models import SchedulerConfig, VaultSession
@@ -48,11 +49,13 @@ class ScrubWorker:
         guild_id: str | None,
         mode: str | None,
         retry_failed_only: bool,
+        order_direction: str = ORDER_NEWEST,
         control: WorkerControl,
         event_sink: EventSink,
     ) -> None:
         start = perf_counter()
         session_deadline = datetime.now(UTC) + timedelta(hours=self._random_run_hours())
+        completed = False
         event_sink({"type": "status", "status": "running"})
 
         async with DiscordClient(token=self.session.token, timeout_seconds=self.request_timeout_seconds) as client:
@@ -78,6 +81,7 @@ class ScrubWorker:
                 job = self.store.claim_next_job(
                     max_attempts=self.max_retries,
                     retry_failed_only=retry_failed_only,
+                    order_direction=order_direction,
                 )
                 if not job:
                     progress = self.store.get_progress(
@@ -92,6 +96,28 @@ class ScrubWorker:
                         max_attempts=self.max_retries,
                         retry_failed_only=retry_failed_only,
                     ):
+                        completed = True
+                        elapsed_seconds = int(perf_counter() - start)
+                        event_sink(
+                            {
+                                "type": "completed",
+                                "elapsed_seconds": elapsed_seconds,
+                                **progress,
+                            }
+                        )
+                        event_sink(
+                            {
+                                "type": "log",
+                                "level": "OK",
+                                "message": (
+                                    f"Completed: processed={progress.get('done', 0)} "
+                                    f"failed={progress.get('failed', 0)} "
+                                    f"remaining={progress.get('remaining', 0)} "
+                                    f"elapsed={elapsed_seconds}s"
+                                ),
+                            }
+                        )
+                        event_sink({"type": "status", "status": "completed"})
                         break
                     await self._sleep_with_stop(5, control)
                     continue
@@ -177,7 +203,8 @@ class ScrubWorker:
                 )
                 await self._sleep_with_stop(delay, control)
 
-        event_sink({"type": "status", "status": "idle"})
+        if not completed:
+            event_sink({"type": "status", "status": "idle"})
 
     def _random_run_hours(self) -> float:
         return random.uniform(self.scheduler.run_hours_min, self.scheduler.run_hours_max)

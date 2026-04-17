@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import Iterator
 
 
 _LOG_FORMAT = "%(asctime)s %(levelname)s %(name)s %(message)s"
@@ -40,3 +42,21 @@ def configure_logging(log_path: str) -> None:
 
     root.addHandler(file_handler)
     root.addHandler(console_handler)
+
+
+@contextmanager
+def suppress_console_logging() -> Iterator[None]:
+    """Temporarily remove console stream handlers while keeping file logging."""
+    root = logging.getLogger()
+    removable = [
+        handler
+        for handler in list(root.handlers)
+        if isinstance(handler, logging.StreamHandler) and not isinstance(handler, RotatingFileHandler)
+    ]
+    for handler in removable:
+        root.removeHandler(handler)
+    try:
+        yield
+    finally:
+        for handler in removable:
+            root.addHandler(handler)

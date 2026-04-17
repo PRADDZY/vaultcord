@@ -74,7 +74,7 @@ Shows counts by type (`all`, `text`, `links`, `media`) and makes no edits.
 ### 3) Scrub and Replace Messages
 
 ```bash
-vault scrub --guild-id <guild_id> --mode all
+vault scrub --guild-id <guild_id> --mode all --order newest
 ```
 
 Supported modes:
@@ -82,6 +82,10 @@ Supported modes:
 - `text`
 - `links`
 - `media`
+
+Supported order:
+- `newest`
+- `oldest`
 
 ### 4) Retry Failed Jobs
 
@@ -104,8 +108,10 @@ vault tui
 TUI start flow:
 
 - Paste `Guild ID` in the left panel
-- Select mode (`All/Text/Links/Media`)
+- Select mode (`All/Text/Links/Media`) and order (`Newest first` / `Oldest first`)
 - Press `Start` (or keyboard shortcut `s`)
+
+When work finishes, TUI now shows an explicit completion message with processed/failed/elapsed stats.
 
 ## Worker Behavior
 

@@ -11,7 +11,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from .constants import MODE_ALL, VALID_MODES
+from .constants import MODE_ALL, ORDER_NEWEST, VALID_MODES, VALID_ORDER_DIRECTIONS
+from .logging_utils import suppress_console_logging
 from .runtime import build_runtime
 from .tui import VaultCordTUI
 from .worker import ScrubWorker, WorkerControl
@@ -24,6 +25,13 @@ def _check_mode(mode: str) -> str:
     if mode not in VALID_MODES:
         raise typer.BadParameter(f"mode must be one of: {sorted(VALID_MODES)}")
     return mode
+
+
+def _check_order(order: str) -> str:
+    value = order.lower()
+    if value not in VALID_ORDER_DIRECTIONS:
+        raise typer.BadParameter(f"order must be one of: {sorted(VALID_ORDER_DIRECTIONS)}")
+    return value
 
 
 def _warn_token_sensitivity() -> None:
@@ -80,6 +88,7 @@ def login() -> None:
 def scrub(
     guild_id: str = typer.Option(..., "--guild-id", help="Discord guild/server ID"),
     mode: str = typer.Option(MODE_ALL, "--mode", callback=lambda v: _check_mode(v.lower())),
+    order: str = typer.Option(ORDER_NEWEST, "--order", callback=_check_order),
     dry_run: bool = typer.Option(False, "--dry-run", help="Preview counts without editing"),
 ) -> None:
     """Scrape authored messages, archive encrypted, and replace on Discord."""
@@ -100,11 +109,21 @@ def scrub(
             console.print(table)
             return
 
-        prepare = asyncio.run(runtime.service.prepare_jobs(session, guild_id=guild_id, mode=mode))
-        console.print(
-            "[cyan]Queue prepared:[/cyan] "
-            f"queued={prepare.queued} skipped={prepare.skipped} already_ref={prepare.already_referenced}"
-        )
+        if runtime.service.has_retryable_queue(guild_id=guild_id, mode=mode):
+            console.print("[cyan]Resume detected:[/cyan] using existing queued work before re-scan")
+        else:
+            prepare = asyncio.run(
+                runtime.service.prepare_jobs(
+                    session,
+                    guild_id=guild_id,
+                    mode=mode,
+                    order_direction=order,
+                )
+            )
+            console.print(
+                "[cyan]Queue prepared:[/cyan] "
+                f"queued={prepare.queued} skipped={prepare.skipped} already_ref={prepare.already_referenced}"
+            )
 
         worker = ScrubWorker(
             store=runtime.store,
@@ -126,6 +145,7 @@ def scrub(
                 guild_id=guild_id,
                 mode=mode,
                 retry_failed_only=False,
+                order_direction=order,
                 control=control,
                 event_sink=_event_sink,
             )
@@ -136,6 +156,14 @@ def scrub(
                 console.print(f"[{event.get('level', 'INFO')}] {event.get('message', '')}")
             elif event_type == "progress":
                 console.print(_format_progress(event))
+            elif event_type == "completed":
+                console.print(
+                    "completed "
+                    f"done={event.get('done', 0)} "
+                    f"failed={event.get('failed', 0)} "
+                    f"remaining={event.get('remaining', 0)} "
+                    f"elapsed={event.get('elapsed_seconds', 0)}s"
+                )
             elif event_type == "status":
                 console.print(f"status={event.get('status')}")
 
@@ -148,6 +176,7 @@ def scrub(
 def retry_failed(
     guild_id: str = typer.Option(..., "--guild-id", help="Discord guild/server ID"),
     mode: str = typer.Option(MODE_ALL, "--mode", callback=lambda v: _check_mode(v.lower())),
+    order: str = typer.Option(ORDER_NEWEST, "--order", callback=_check_order),
 ) -> None:
     """Reset failed jobs and retry them."""
     try:
@@ -180,6 +209,14 @@ def retry_failed(
                 console.print(f"[{event.get('level', 'INFO')}] {event.get('message', '')}")
             elif event_type == "progress":
                 console.print(_format_progress(event))
+            elif event_type == "completed":
+                console.print(
+                    "completed "
+                    f"done={event.get('done', 0)} "
+                    f"failed={event.get('failed', 0)} "
+                    f"remaining={event.get('remaining', 0)} "
+                    f"elapsed={event.get('elapsed_seconds', 0)}s"
+                )
             elif event_type == "status":
                 console.print(f"status={event.get('status')}")
 
@@ -188,6 +225,7 @@ def retry_failed(
                 guild_id=guild_id,
                 mode=mode,
                 retry_failed_only=True,
+                order_direction=order,
                 control=control,
                 event_sink=_event_sink,
             )
@@ -228,7 +266,8 @@ def tui() -> None:
         asyncio.run(runtime.service.validate_session(session))
 
         app_ui = VaultCordTUI(service=runtime.service, session=session, config=runtime.config)
-        app_ui.run()
+        with suppress_console_logging():
+            app_ui.run()
     except Exception as exc:
         _exit_with_error(
             f"Unable to launch TUI ({type(exc).__name__}). Validate credentials and local config."
