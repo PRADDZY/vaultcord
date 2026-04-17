@@ -160,7 +160,10 @@ class ScrubWorker:
         return random.uniform(self.scheduler.pause_hours_min, self.scheduler.pause_hours_max)
 
     async def _sleep_with_stop(self, seconds: int, control: WorkerControl) -> None:
-        for _ in range(max(seconds, 1)):
+        if seconds <= 0:
+            await asyncio.sleep(0)
+            return
+        for _ in range(seconds):
             if control.stop_event.is_set():
                 return
             await asyncio.sleep(1)

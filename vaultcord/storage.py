@@ -270,7 +270,11 @@ class VaultStore:
             where.append("mode = ?")
             params.append(mode)
 
-        query = f"UPDATE jobs SET status = ?, next_attempt_at = ?, updated_at = ? WHERE {' AND '.join(where)}"
+        query = (
+            "UPDATE jobs SET status = ?, attempts = 0, next_attempt_at = ?, "
+            "last_error = NULL, updated_at = ? "
+            f"WHERE {' AND '.join(where)}"
+        )
         now = utc_now_iso()
         with self._connect() as conn:
             cursor = conn.execute(query, (STATUS_PENDING, now, now, *params))

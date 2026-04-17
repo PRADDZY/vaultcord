@@ -1,0 +1,15 @@
+{
+  "data_dir": "~/.vaultcord",
+  "db_path": "~/.vaultcord/vaultcord.db",
+  "log_path": "~/.vaultcord/vaultcord.log",
+  "request_timeout_seconds": 20.0,
+  "max_retries": 3,
+  "scheduler": {
+    "edit_delay_min_seconds": 15,
+    "edit_delay_max_seconds": 25,
+    "run_hours_min": 1.5,
+    "run_hours_max": 3.0,
+    "pause_hours_min": 0.5,
+    "pause_hours_max": 2.0
+  }
+}
