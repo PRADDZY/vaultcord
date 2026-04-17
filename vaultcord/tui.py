@@ -508,9 +508,9 @@ class VaultCordTUI(App[None]):
         single_line = " ".join(str(message).replace("\n", " ").replace("\r", " ").split())
         if len(single_line) <= max_chars:
             return single_line
-        if max_chars == 1:
-            return "…"
-        return f"{single_line[: max_chars - 1]}…"
+        if max_chars <= 3:
+            return "." * max_chars
+        return f"{single_line[: max_chars - 3]}..."
 
     def _render_log(self, level: str, message: str, *, max_width: int = 120) -> Text:
         ts = datetime.now().strftime("%H:%M:%S")

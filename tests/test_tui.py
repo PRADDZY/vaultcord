@@ -1,7 +1,7 @@
 from pathlib import Path
 
 import pytest
-from textual.widgets import Input, RadioButton, Static
+from textual.widgets import Button, Checkbox, Input, RadioButton, RichLog, Static
 
 from vaultcord.constants import MODE_LINKS, ORDER_OLDEST
 from vaultcord.models import AppConfig, SchedulerConfig, VaultSession
@@ -30,6 +30,21 @@ async def test_tui_focuses_server_id_on_mount(tmp_path: Path) -> None:
     async with app.run_test():
         guild_input = app.query_one("#guild-id", Input)
         assert app.focused is guild_input
+
+
+@pytest.mark.asyncio
+async def test_tui_core_controls_are_visible(tmp_path: Path) -> None:
+    app = build_tui(tmp_path)
+    async with app.run_test():
+        assert app.query_one("#start", Button)
+        assert app.query_one("#pause", Button)
+        assert app.query_one("#resume", Button)
+        assert app.query_one("#stop", Button)
+        assert app.query_one("#mode-selector")
+        assert app.query_one("#order-selector")
+        assert app.query_one("#dry-run", Checkbox)
+        assert app.query_one("#retry-only", Checkbox)
+        assert app.query_one("#logs", RichLog)
 
 
 @pytest.mark.asyncio
@@ -72,3 +87,11 @@ def test_render_log_truncates_and_keeps_columns(tmp_path: Path) -> None:
     assert line.plain.count("|") == 2
     assert "\n" not in line.plain
     assert len(line.plain) <= 68
+
+
+def test_compact_layout_switches_by_width(tmp_path: Path) -> None:
+    app = build_tui(tmp_path)
+    app._update_layout_mode(120)
+    assert app.has_class("-compact")
+    app._update_layout_mode(220)
+    assert not app.has_class("-compact")
