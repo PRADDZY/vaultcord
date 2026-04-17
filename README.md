@@ -7,10 +7,12 @@ It encrypts message data locally, replaces the original Discord content with a v
 ## Features
 
 - Textual TUI dashboard with live progress, logs, and worker controls
+- TUI-side vault retrieval by `vault_id` without leaving the dashboard
 - Modular backend components (`scraper`, `worker`, `security`, `editor`)
 - BYOT authentication (`vault login`) with encrypted token storage
 - Per-message encryption (no plaintext message storage)
 - Guild-wide queue processing with retry handling and resume support
+- Guild scan includes text channels plus active/archived threads
 - Dry-run mode for count previews without making API edits
 - Local-only architecture (no telemetry, no external VaultCord servers)
 

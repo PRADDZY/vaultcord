@@ -88,10 +88,12 @@ class VaultCordTUI(App[None]):
             with Vertical(id="left-panel"):
                 yield Static("Controls")
                 yield Input(placeholder="Guild ID", id="guild-id")
+                yield Input(placeholder="Vault ID (for retrieval)", id="vault-id")
                 yield Button("Start", id="start", variant="success", classes="action")
                 yield Button("Pause", id="pause", variant="warning", classes="action")
                 yield Button("Resume", id="resume", variant="primary", classes="action")
                 yield Button("Stop", id="stop", variant="error", classes="action")
+                yield Button("Get Message", id="get-vault", variant="default", classes="action")
                 yield Checkbox("Dry Run", id="dry-run")
                 yield Checkbox("Retry Failed Only", id="retry-only")
 
@@ -104,6 +106,7 @@ class VaultCordTUI(App[None]):
                 yield Static("Rate: 0 msgs/hour", id="stat-rate", classes="stat")
                 yield Static("ETA: --", id="stat-eta", classes="stat")
                 yield ProgressBar(total=100, id="progress")
+                yield Static("Retrieved: (none)", id="retrieval-output")
 
         yield RichLog(id="logs", wrap=True)
         yield Footer()
@@ -129,6 +132,8 @@ class VaultCordTUI(App[None]):
             self.worker_control.pause_event.clear()
         elif event.button.id == "stop":
             self.worker_control.stop_event.set()
+        elif event.button.id == "get-vault":
+            await self._handle_get_vault()
 
     async def _handle_start(self) -> None:
         if self.worker_task and not self.worker_task.done():
@@ -196,6 +201,27 @@ class VaultCordTUI(App[None]):
                 event_sink=self._emit_immediate,
             )
         )
+
+    async def _handle_get_vault(self) -> None:
+        vault_id = self.query_one("#vault-id", Input).value.strip()
+        if not vault_id:
+            await self.event_queue.put(
+                {"type": "log", "level": "FAIL", "message": "Vault ID is required for retrieval"}
+            )
+            return
+
+        try:
+            payload = self.service.decrypt_vault_message(vault_id=vault_id, password=self.session.password)
+        except Exception:
+            await self.event_queue.put(
+                {"type": "log", "level": "FAIL", "message": "Unable to decrypt vault message"}
+            )
+            self.query_one("#retrieval-output", Static).update("Retrieved: decrypt failed")
+            return
+
+        content = str(payload.get("content", ""))
+        preview = content if len(content) <= 220 else f"{content[:220]}..."
+        self.query_one("#retrieval-output", Static).update(f"Retrieved: {preview}")
 
     def _emit_immediate(self, event: dict[str, Any]) -> None:
         self.event_queue.put_nowait(event)

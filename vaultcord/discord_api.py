@@ -97,19 +97,38 @@ class DiscordClient:
 
     async def list_archived_threads(self, parent_channel_id: str) -> list[dict[str, Any]]:
         threads: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
 
-        public_response = await self._request(
-            "GET", f"/channels/{parent_channel_id}/threads/archived/public", params={"limit": 100}
-        )
-        if public_response.status_code == 200:
-            threads.extend(public_response.json().get("threads", []))
+        async def _collect(path: str) -> None:
+            before: str | None = None
+            while True:
+                params: dict[str, Any] = {"limit": 100}
+                if before:
+                    params["before"] = before
+                response = await self._request("GET", path, params=params)
+                if response.status_code != 200:
+                    return
+                payload = response.json()
+                page_threads = payload.get("threads", [])
+                if not page_threads:
+                    return
 
-        private_response = await self._request(
-            "GET", f"/channels/{parent_channel_id}/users/@me/threads/archived/private", params={"limit": 100}
-        )
-        if private_response.status_code == 200:
-            threads.extend(private_response.json().get("threads", []))
+                for thread in page_threads:
+                    thread_id = str(thread.get("id", ""))
+                    if thread_id and thread_id not in seen_ids:
+                        seen_ids.add(thread_id)
+                        threads.append(thread)
 
+                if not payload.get("has_more"):
+                    return
+
+                thread_metadata = page_threads[-1].get("thread_metadata") or {}
+                before = thread_metadata.get("archive_timestamp")
+                if not before:
+                    return
+
+        await _collect(f"/channels/{parent_channel_id}/threads/archived/public")
+        await _collect(f"/channels/{parent_channel_id}/users/@me/threads/archived/private")
         return threads
 
     async def fetch_channel_messages(
