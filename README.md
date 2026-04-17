@@ -131,6 +131,16 @@ Run tests:
 pytest -q
 ```
 
+CI runs on GitHub Actions for Python 3.11/3.12/3.13 on Linux and Windows.
+
+## Operations
+
+See [docs/OPERATIONS.md](docs/OPERATIONS.md) for backup/restore, interruption recovery, and upgrade guidance.
+
+## Security Reporting
+
+See [SECURITY.md](SECURITY.md).
+
 ## Project Structure
 
 ```text

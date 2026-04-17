@@ -1,6 +1,8 @@
 import asyncio
 
-from vaultcord.discord_api import DiscordClient
+import pytest
+
+from vaultcord.discord_api import DiscordApiError, DiscordClient
 
 
 class FakeResponse:
@@ -63,3 +65,17 @@ def test_list_archived_threads_paginates_and_deduplicates() -> None:
     threads = asyncio.run(_run_list_archived_threads())
     ids = [thread["id"] for thread in threads]
     assert ids == ["t1", "t2", "t3", "t4"]
+
+
+def test_retryable_status_classification() -> None:
+    client = DiscordClient(token="x")
+    assert client._is_retryable_status(500)
+    assert client._is_retryable_status(409)
+    assert not client._is_retryable_status(403)
+
+
+def test_expect_status_marks_retryable_flag() -> None:
+    client = DiscordClient(token="x")
+    with pytest.raises(DiscordApiError) as exc_info:
+        client._expect_status(FakeResponse(503, {}), ok_statuses={200}, message="bad")
+    assert exc_info.value.retryable

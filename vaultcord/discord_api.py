@@ -16,8 +16,15 @@ LOGGER = logging.getLogger(__name__)
 class DiscordApiError(RuntimeError):
     """Raised for API failures with sanitized context."""
 
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        retryable: bool = False,
+    ) -> None:
         self.status_code = status_code
+        self.retryable = retryable
         super().__init__(message)
 
 
@@ -50,7 +57,18 @@ class DiscordClient:
 
         transient_retries = 4
         for attempt in range(1, transient_retries + 1):
-            response = await self._client.request(method, path, **kwargs)
+            try:
+                response = await self._client.request(method, path, **kwargs)
+            except httpx.TimeoutException:
+                if attempt < transient_retries:
+                    await asyncio.sleep(min(2**attempt, 12))
+                    continue
+                raise DiscordApiError("Discord API timeout", retryable=True) from None
+            except httpx.TransportError:
+                if attempt < transient_retries:
+                    await asyncio.sleep(min(2**attempt, 12))
+                    continue
+                raise DiscordApiError("Discord API transport failure", retryable=True) from None
 
             if response.status_code == 429:
                 retry_after = float(response.json().get("retry_after", 2.0))
@@ -75,16 +93,33 @@ class DiscordClient:
 
         raise DiscordApiError("Discord API did not recover after retries")
 
+    @staticmethod
+    def _is_retryable_status(status_code: int) -> bool:
+        return status_code in {408, 409, 425, 429} or status_code >= 500
+
+    def _expect_status(
+        self,
+        response: httpx.Response,
+        *,
+        ok_statuses: set[int],
+        message: str,
+    ) -> None:
+        if response.status_code in ok_statuses:
+            return
+        raise DiscordApiError(
+            message,
+            status_code=response.status_code,
+            retryable=self._is_retryable_status(response.status_code),
+        )
+
     async def get_me(self) -> dict[str, Any]:
         response = await self._request("GET", "/users/@me")
-        if response.status_code != 200:
-            raise DiscordApiError("Token validation failed", status_code=response.status_code)
+        self._expect_status(response, ok_statuses={200}, message="Token validation failed")
         return response.json()
 
     async def list_guild_channels(self, guild_id: str) -> list[dict[str, Any]]:
         response = await self._request("GET", f"/guilds/{guild_id}/channels")
-        if response.status_code != 200:
-            raise DiscordApiError("Failed to list guild channels", status_code=response.status_code)
+        self._expect_status(response, ok_statuses={200}, message="Failed to list guild channels")
         return response.json()
 
     async def list_active_threads(self, guild_id: str) -> list[dict[str, Any]]:
@@ -142,8 +177,7 @@ class DiscordClient:
         if before:
             params["before"] = before
         response = await self._request("GET", f"/channels/{channel_id}/messages", params=params)
-        if response.status_code != 200:
-            raise DiscordApiError("Failed to fetch messages", status_code=response.status_code)
+        self._expect_status(response, ok_statuses={200}, message="Failed to fetch messages")
         return response.json()
 
     async def edit_message(self, channel_id: str, message_id: str, content: str) -> dict[str, Any]:
@@ -152,6 +186,5 @@ class DiscordClient:
             f"/channels/{channel_id}/messages/{message_id}",
             json={"content": content},
         )
-        if response.status_code not in {200, 202}:
-            raise DiscordApiError("Failed to edit message", status_code=response.status_code)
+        self._expect_status(response, ok_statuses={200, 202}, message="Failed to edit message")
         return response.json()

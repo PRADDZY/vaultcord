@@ -110,8 +110,12 @@ class ScrubWorker:
                         "message": f"Updated message {job.discord_message_id}",
                     })
                 except DiscordApiError as exc:
-                    attempts = job.attempts + 1
-                    retry_delay = min(30 * attempts, 300)
+                    if exc.retryable:
+                        attempts = job.attempts + 1
+                        retry_delay = min(30 * attempts, 300)
+                    else:
+                        attempts = self.max_retries
+                        retry_delay = 0
                     self.store.mark_job_failed(
                         job.id,
                         attempts=attempts,

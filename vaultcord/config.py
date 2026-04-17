@@ -37,6 +37,22 @@ def _expand_path(value: str) -> str:
     return str(Path(value).expanduser())
 
 
+def _validate_scheduler(scheduler: SchedulerConfig) -> SchedulerConfig:
+    if scheduler.edit_delay_min_seconds <= 0 or scheduler.edit_delay_max_seconds <= 0:
+        raise ValueError("scheduler edit delays must be positive")
+    if scheduler.edit_delay_min_seconds > scheduler.edit_delay_max_seconds:
+        raise ValueError("scheduler edit delay min must be <= max")
+    if scheduler.run_hours_min <= 0 or scheduler.run_hours_max <= 0:
+        raise ValueError("scheduler run hours must be positive")
+    if scheduler.run_hours_min > scheduler.run_hours_max:
+        raise ValueError("scheduler run_hours_min must be <= run_hours_max")
+    if scheduler.pause_hours_min < 0 or scheduler.pause_hours_max < 0:
+        raise ValueError("scheduler pause hours must be non-negative")
+    if scheduler.pause_hours_min > scheduler.pause_hours_max:
+        raise ValueError("scheduler pause_hours_min must be <= pause_hours_max")
+    return scheduler
+
+
 def _default_config() -> dict:
     scheduler = SchedulerConfig()
     return {
@@ -72,6 +88,7 @@ def load_config() -> AppConfig:
         pause_hours_min=float(scheduler.get("pause_hours_min", 0.5)),
         pause_hours_max=float(scheduler.get("pause_hours_max", 2.0)),
     )
+    scheduler_config = _validate_scheduler(scheduler_config)
 
     return AppConfig(
         data_dir=_expand_path(str(raw.get("data_dir", default_data_dir()))),
