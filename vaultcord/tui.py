@@ -21,6 +21,7 @@ from .worker import ScrubWorker, WorkerControl
 
 class VaultCordTUI(App[None]):
     BINDINGS = [
+        Binding("i", "focus_server_id", "Server ID"),
         Binding("s", "start_job", "Start"),
         Binding("p", "pause_job", "Pause"),
         Binding("r", "resume_job", "Resume"),
@@ -89,7 +90,7 @@ class VaultCordTUI(App[None]):
         yield Header(show_clock=True)
         yield Static("VaultCord | Status: Idle", id="status-line")
         yield Static(
-            "Enter Guild ID, then Start. Shortcuts: s=start p=pause r=resume x=stop g=get.",
+            "Paste Server ID, then Start. Shortcuts: i=server-id s=start p=pause r=resume x=stop g=get.",
             id="help-line",
         )
 
@@ -102,7 +103,8 @@ class VaultCordTUI(App[None]):
         with Horizontal(id="main"):
             with Vertical(id="left-panel"):
                 yield Static("Controls")
-                yield Input(placeholder="Guild ID", id="guild-id")
+                yield Static("Server ID (Guild ID)")
+                yield Input(placeholder="Paste server id here", id="guild-id")
                 yield Input(placeholder="Vault ID (for retrieval)", id="vault-id")
                 yield Button("Start", id="start", variant="success", classes="action")
                 yield Button("Pause", id="pause", variant="warning", classes="action")
@@ -165,6 +167,12 @@ class VaultCordTUI(App[None]):
     async def action_start_job(self) -> None:
         await self._handle_start()
 
+    async def action_focus_server_id(self) -> None:
+        self.query_one("#guild-id", Input).focus()
+        await self.event_queue.put(
+            {"type": "log", "level": "INFO", "message": "Server ID input focused"}
+        )
+
     async def action_pause_job(self) -> None:
         self.worker_control.pause_event.set()
         await self.event_queue.put({"type": "log", "level": "INFO", "message": "Pause requested"})
@@ -191,7 +199,7 @@ class VaultCordTUI(App[None]):
                 {
                     "type": "log",
                     "level": "FAIL",
-                    "message": "Guild ID is required. Enable Developer Mode in Discord and copy server ID.",
+                    "message": "Server ID is required. Enable Discord Developer Mode and copy server ID.",
                 }
             )
             return
