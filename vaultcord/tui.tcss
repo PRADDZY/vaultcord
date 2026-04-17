@@ -24,12 +24,13 @@ Screen {
 
 .field-label {
     color: #9bb1c9;
+    width: auto;
     margin-right: 1;
 }
 
 #top-strip {
     layout: horizontal;
-    height: auto;
+    height: 6;
     margin-top: 1;
 }
 
@@ -100,7 +101,14 @@ Screen {
     layout: horizontal;
     height: auto;
     min-height: 3;
-    content-align: left middle;
+}
+
+#command-primary .field-label {
+    min-width: 10;
+}
+
+#command-secondary .field-label {
+    min-width: 6;
 }
 
 #command-secondary {
