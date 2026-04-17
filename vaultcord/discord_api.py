@@ -1,0 +1,138 @@
+"""Discord REST client with user-token auth and rate-limit handling."""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from typing import Any
+
+import httpx
+
+from .constants import DISCORD_API_BASE
+
+LOGGER = logging.getLogger(__name__)
+
+
+class DiscordApiError(RuntimeError):
+    """Raised for API failures with sanitized context."""
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        self.status_code = status_code
+        super().__init__(message)
+
+
+class DiscordClient:
+    def __init__(self, token: str, timeout_seconds: float = 20.0) -> None:
+        self._token = token
+        self._timeout_seconds = timeout_seconds
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> "DiscordClient":
+        self._client = httpx.AsyncClient(
+            base_url=DISCORD_API_BASE,
+            timeout=self._timeout_seconds,
+            headers={
+                "Authorization": self._token,
+                "User-Agent": "VaultCord/0.1 (+local)",
+                "Content-Type": "application/json",
+            },
+        )
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        if self._client:
+            await self._client.aclose()
+            self._client = None
+
+    async def _request(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
+        if self._client is None:
+            raise RuntimeError("DiscordClient is not started")
+
+        transient_retries = 4
+        for attempt in range(1, transient_retries + 1):
+            response = await self._client.request(method, path, **kwargs)
+
+            if response.status_code == 429:
+                retry_after = float(response.json().get("retry_after", 2.0))
+                await asyncio.sleep(max(retry_after, 0.5))
+                continue
+
+            if response.status_code in {500, 502, 503, 504} and attempt < transient_retries:
+                await asyncio.sleep(min(2**attempt, 12))
+                continue
+
+            reset_after = response.headers.get("X-RateLimit-Reset-After")
+            remaining = response.headers.get("X-RateLimit-Remaining")
+            if remaining == "0" and reset_after:
+                try:
+                    sleep_seconds = float(reset_after)
+                    if sleep_seconds > 0:
+                        await asyncio.sleep(sleep_seconds)
+                except ValueError:
+                    pass
+
+            return response
+
+        raise DiscordApiError("Discord API did not recover after retries")
+
+    async def get_me(self) -> dict[str, Any]:
+        response = await self._request("GET", "/users/@me")
+        if response.status_code != 200:
+            raise DiscordApiError("Token validation failed", status_code=response.status_code)
+        return response.json()
+
+    async def list_guild_channels(self, guild_id: str) -> list[dict[str, Any]]:
+        response = await self._request("GET", f"/guilds/{guild_id}/channels")
+        if response.status_code != 200:
+            raise DiscordApiError("Failed to list guild channels", status_code=response.status_code)
+        return response.json()
+
+    async def list_active_threads(self, guild_id: str) -> list[dict[str, Any]]:
+        response = await self._request("GET", f"/guilds/{guild_id}/threads/active")
+        if response.status_code != 200:
+            LOGGER.warning("Active thread listing failed for guild %s", guild_id)
+            return []
+        data = response.json()
+        return data.get("threads", [])
+
+    async def list_archived_threads(self, parent_channel_id: str) -> list[dict[str, Any]]:
+        threads: list[dict[str, Any]] = []
+
+        public_response = await self._request(
+            "GET", f"/channels/{parent_channel_id}/threads/archived/public", params={"limit": 100}
+        )
+        if public_response.status_code == 200:
+            threads.extend(public_response.json().get("threads", []))
+
+        private_response = await self._request(
+            "GET", f"/channels/{parent_channel_id}/users/@me/threads/archived/private", params={"limit": 100}
+        )
+        if private_response.status_code == 200:
+            threads.extend(private_response.json().get("threads", []))
+
+        return threads
+
+    async def fetch_channel_messages(
+        self,
+        channel_id: str,
+        *,
+        before: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        params: dict[str, Any] = {"limit": limit}
+        if before:
+            params["before"] = before
+        response = await self._request("GET", f"/channels/{channel_id}/messages", params=params)
+        if response.status_code != 200:
+            raise DiscordApiError("Failed to fetch messages", status_code=response.status_code)
+        return response.json()
+
+    async def edit_message(self, channel_id: str, message_id: str, content: str) -> dict[str, Any]:
+        response = await self._request(
+            "PATCH",
+            f"/channels/{channel_id}/messages/{message_id}",
+            json={"content": content},
+        )
+        if response.status_code not in {200, 202}:
+            raise DiscordApiError("Failed to edit message", status_code=response.status_code)
+        return response.json()
