@@ -79,3 +79,37 @@ def test_expect_status_marks_retryable_flag() -> None:
     with pytest.raises(DiscordApiError) as exc_info:
         client._expect_status(FakeResponse(503, {}), ok_statuses={200}, message="bad")
     assert exc_info.value.retryable
+
+
+class StubAsyncClient:
+    def __init__(self, responses):
+        self._responses = responses
+        self._idx = 0
+
+    async def request(self, method: str, path: str, **kwargs):
+        _ = (method, path, kwargs)
+        if self._idx >= len(self._responses):
+            return self._responses[-1]
+        value = self._responses[self._idx]
+        self._idx += 1
+        return value
+
+
+@pytest.mark.asyncio
+async def test_request_429_exposes_retry_after_when_exhausted(monkeypatch) -> None:
+    client = DiscordClient(token="x")
+    responses = [FakeResponse(429, {"retry_after": 3.0, "global": True}) for _ in range(8)]
+    for response in responses:
+        response.headers = {"Retry-After": "3.0", "X-RateLimit-Bucket": "bkt-1"}  # type: ignore[attr-defined]
+
+    client._client = StubAsyncClient(responses)  # type: ignore[assignment]
+    async def _no_sleep(_: float) -> None:
+        return None
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+
+    with pytest.raises(DiscordApiError) as exc_info:
+        await client._request("GET", "/users/@me")
+    assert exc_info.value.status_code == 429
+    assert exc_info.value.retryable
+    assert exc_info.value.retry_after_seconds is not None
+    assert exc_info.value.retry_after_seconds >= 3.0

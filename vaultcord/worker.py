@@ -113,6 +113,8 @@ class ScrubWorker:
                     if exc.retryable:
                         attempts = job.attempts + 1
                         retry_delay = min(30 * attempts, 300)
+                        if exc.retry_after_seconds is not None:
+                            retry_delay = max(retry_delay, int(exc.retry_after_seconds) + 1)
                     else:
                         attempts = self.max_retries
                         retry_delay = 0
