@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime
 from typing import Any
 
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
@@ -49,7 +51,7 @@ class VaultCordTUI(App[None]):
     }
 
     #logs {
-        height: 12;
+        height: 14;
         border: round #666666;
         margin-top: 1;
     }
@@ -121,7 +123,7 @@ class VaultCordTUI(App[None]):
                 yield ProgressBar(total=100, id="progress")
                 yield Static("Retrieved: (none)", id="retrieval-output")
 
-        yield RichLog(id="logs", wrap=True)
+        yield RichLog(id="logs", wrap=False, highlight=False, markup=False, auto_scroll=True, max_lines=4000)
         yield Footer()
 
     def on_mount(self) -> None:
@@ -201,11 +203,25 @@ class VaultCordTUI(App[None]):
         self.worker_control = WorkerControl()
 
         if dry_run:
+            await self.event_queue.put(
+                {
+                    "type": "log",
+                    "level": "INFO",
+                    "message": f"Dry run started for guild={guild_input} mode={self.selected_mode}",
+                }
+            )
             counts = await self.service.preview_counts(self.session, guild_input)
             await self.event_queue.put({"type": "log", "level": "OK", "message": f"Dry run counts: {counts}"})
             return
 
         if retry_failed_only:
+            await self.event_queue.put(
+                {
+                    "type": "log",
+                    "level": "INFO",
+                    "message": f"Retry-failed run started for guild={guild_input} mode={self.selected_mode}",
+                }
+            )
             reset_count = self.service.retry_failed(guild_id=guild_input, mode=self.selected_mode)
             await self.event_queue.put(
                 {
@@ -215,6 +231,13 @@ class VaultCordTUI(App[None]):
                 }
             )
         else:
+            await self.event_queue.put(
+                {
+                    "type": "log",
+                    "level": "INFO",
+                    "message": f"Scrub run started for guild={guild_input} mode={self.selected_mode}",
+                }
+            )
             prepare_result = await self.service.prepare_jobs(
                 self.session,
                 guild_id=guild_input,
@@ -287,7 +310,7 @@ class VaultCordTUI(App[None]):
                 log_widget = self.query_one("#logs", RichLog)
                 level = str(event.get("level", "INFO"))
                 message = str(event.get("message", ""))
-                log_widget.write(f"[{level}] {message}")
+                log_widget.write(self._render_log(level, message))
 
     def _update_progress(self, payload: dict[str, Any]) -> None:
         self.total = int(payload.get("total", 0))
@@ -318,3 +341,21 @@ class VaultCordTUI(App[None]):
             eta_hours = self.remaining / rate
             eta = f"{eta_hours:.2f}h"
         self.query_one("#stat-eta", Static).update(f"ETA: {eta}")
+
+    def _render_log(self, level: str, message: str) -> Text:
+        ts = datetime.now().strftime("%H:%M:%S")
+        norm_level = level.upper().strip()
+        style = {
+            "OK": "green",
+            "FAIL": "red",
+            "SKIP": "yellow",
+            "INFO": "cyan",
+        }.get(norm_level, "white")
+
+        row = Text()
+        row.append(ts, style="dim")
+        row.append(" | ", style="dim")
+        row.append(f"{norm_level:<5}", style=style)
+        row.append(" | ", style="dim")
+        row.append(message)
+        return row

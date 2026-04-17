@@ -110,6 +110,7 @@ class ScrubWorker:
                         "message": f"Updated message {job.discord_message_id}",
                     })
                 except DiscordApiError as exc:
+                    status_label = str(exc.status_code) if exc.status_code is not None else "unknown"
                     if exc.retryable:
                         attempts = job.attempts + 1
                         retry_delay = min(30 * attempts, 300)
@@ -129,7 +130,10 @@ class ScrubWorker:
                             {
                                 "type": "log",
                                 "level": "FAIL",
-                                "message": f"Message {job.discord_message_id} failed permanently",
+                                "message": (
+                                    f"Message {job.discord_message_id} failed permanently "
+                                    f"(status={status_label})"
+                                ),
                             }
                         )
                     else:
@@ -137,7 +141,10 @@ class ScrubWorker:
                             {
                                 "type": "log",
                                 "level": "FAIL",
-                                "message": f"Message {job.discord_message_id} failed; retry {attempts}/{self.max_retries}",
+                                "message": (
+                                    f"Message {job.discord_message_id} failed (status={status_label}); "
+                                    f"retry {attempts}/{self.max_retries} in {retry_delay}s"
+                                ),
                             }
                         )
                 except Exception as exc:  # pragma: no cover - defensive guard
