@@ -1,0 +1,268 @@
+Screen {
+    layout: vertical;
+    background: #090f16;
+    color: $foreground;
+}
+
+#shell {
+    height: 1fr;
+    padding: 0 1;
+}
+
+.card {
+    border: round #2d4058;
+    background: #101923;
+    padding: 1 2;
+    margin-top: 1;
+}
+
+.card-title {
+    color: #77b9ff;
+    text-style: bold;
+    margin-bottom: 1;
+}
+
+.field-label {
+    color: #8fa4be;
+    margin-right: 1;
+}
+
+#top-strip {
+    layout: horizontal;
+    height: 5;
+    margin-top: 1;
+}
+
+#brand-card {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#status-card {
+    width: 56;
+}
+
+#app-title {
+    color: #9bd0ff;
+    text-style: bold;
+}
+
+#app-subtitle {
+    color: #8fa4be;
+    margin-top: 1;
+}
+
+#status-chip {
+    width: auto;
+    height: 1;
+    text-style: bold;
+    padding: 0 1;
+    border: round #37567b;
+}
+
+#status-chip.is-idle {
+    color: #9ac7ff;
+    background: #17304a;
+}
+
+#status-chip.is-running {
+    color: #8df0b6;
+    background: #163e34;
+    border: round #2e7a63;
+}
+
+#status-chip.is-paused {
+    color: #ffe18b;
+    background: #4e3d12;
+    border: round #8c6b16;
+}
+
+#status-chip.is-completed {
+    color: #9bd9ff;
+    background: #1a3e57;
+    border: round #356788;
+}
+
+#run-context {
+    color: #95a8bc;
+    margin-top: 1;
+}
+
+#command-strip {
+    height: 9;
+}
+
+.command-row {
+    layout: horizontal;
+    height: 3;
+}
+
+#command-secondary {
+    margin-top: 1;
+}
+
+#guild-id {
+    width: 1fr;
+    margin-right: 1;
+}
+
+#command-primary Button {
+    min-width: 9;
+    margin-right: 1;
+}
+
+#command-primary Button:last-child {
+    margin-right: 0;
+}
+
+.inline-radio {
+    layout: horizontal;
+    margin-right: 2;
+}
+
+.inline-radio RadioButton {
+    margin-right: 1;
+}
+
+#command-secondary Checkbox {
+    margin-left: 2;
+}
+
+#workspace {
+    layout: horizontal;
+    height: 1fr;
+    margin-top: 1;
+}
+
+#control-panel {
+    width: 44;
+    margin-right: 1;
+    overflow-y: auto;
+}
+
+#telemetry-panel {
+    width: 1fr;
+}
+
+#vault-id {
+    margin-bottom: 1;
+}
+
+#get-vault {
+    width: 1fr;
+    margin-bottom: 1;
+}
+
+#retrieval-output {
+    min-height: 4;
+    border: round #2d4058;
+    background: #0d151e;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#shortcut-help {
+    margin-top: 1;
+    color: #8fa4be;
+}
+
+.stat-row {
+    margin-top: 1;
+}
+
+#progress {
+    margin-top: 1;
+}
+
+#completion-banner {
+    margin-top: 1;
+    border: round #2d4058;
+    padding: 0 1;
+    color: #95a8bc;
+}
+
+#completion-banner.is-success {
+    color: #99f2bf;
+    border: round #2f7e67;
+    background: #10352b;
+}
+
+#completion-banner.is-fail {
+    color: #ffd88f;
+    border: round #8c6b16;
+    background: #412f0f;
+}
+
+#completion-banner.is-neutral {
+    color: #95a8bc;
+}
+
+#logs-panel {
+    height: 15;
+    margin-top: 1;
+}
+
+#logs {
+    height: 1fr;
+    scrollbar-gutter: stable;
+    border: round #2d4058;
+    background: #0c131c;
+}
+
+Screen.-compact #top-strip {
+    layout: vertical;
+    height: auto;
+}
+
+Screen.-compact #brand-card {
+    margin-right: 0;
+    margin-bottom: 1;
+}
+
+Screen.-compact #status-card {
+    width: 1fr;
+}
+
+Screen.-compact #command-strip {
+    height: auto;
+}
+
+Screen.-compact #command-primary,
+Screen.-compact #command-secondary {
+    layout: vertical;
+    height: auto;
+}
+
+Screen.-compact #guild-id {
+    margin-right: 0;
+}
+
+Screen.-compact #command-primary Button {
+    width: 1fr;
+    margin-right: 0;
+    margin-top: 1;
+}
+
+Screen.-compact .inline-radio {
+    margin-right: 0;
+    margin-top: 1;
+}
+
+Screen.-compact #command-secondary Checkbox {
+    margin-left: 0;
+    margin-top: 1;
+}
+
+Screen.-compact #workspace {
+    layout: vertical;
+}
+
+Screen.-compact #control-panel {
+    width: 1fr;
+    margin-right: 0;
+    margin-bottom: 1;
+}
+
+Screen.-compact #logs-panel {
+    height: 18;
+}

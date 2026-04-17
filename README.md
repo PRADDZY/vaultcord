@@ -107,9 +107,9 @@ vault tui
 
 TUI start flow:
 
-- Paste `Guild ID` in the left panel
-- Select mode (`All/Text/Links/Media`) and order (`Newest first` / `Oldest first`)
-- Press `Start` (or keyboard shortcut `s`)
+- Use the top **Command Strip** for `Guild ID`, mode, order, and run controls
+- Use **Command Deck** (left) for `vault_id` retrieval
+- Monitor **Telemetry** (right) and **Event Console** (bottom) live during execution
 
 When work finishes, TUI now shows an explicit completion message with processed/failed/elapsed stats.
 

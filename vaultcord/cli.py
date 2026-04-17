@@ -263,10 +263,9 @@ def tui() -> None:
         runtime = build_runtime()
         password = typer.prompt("Vault password", hide_input=True)
         session = runtime.service.unlock_session(password)
-        asyncio.run(runtime.service.validate_session(session))
-
         app_ui = VaultCordTUI(service=runtime.service, session=session, config=runtime.config)
         with suppress_console_logging():
+            asyncio.run(runtime.service.validate_session(session))
             app_ui.run()
     except Exception as exc:
         _exit_with_error(

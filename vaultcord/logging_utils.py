@@ -27,6 +27,8 @@ def configure_logging(log_path: str) -> None:
     Path(log_path).parent.mkdir(parents=True, exist_ok=True)
     root = logging.getLogger()
     root.setLevel(logging.INFO)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     if root.handlers:
         return
