@@ -20,6 +20,8 @@ from .worker import ScrubWorker, WorkerControl
 
 
 class VaultCordTUI(App[None]):
+    ENABLE_COMMAND_PALETTE = False
+
     BINDINGS = [
         Binding("i", "focus_server_id", "Server ID"),
         Binding("s", "start_job", "Start"),
