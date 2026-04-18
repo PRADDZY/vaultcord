@@ -204,3 +204,41 @@ def test_prepare_jobs_batch_aggregates_channel_fetch_failures(tmp_path: Path) ->
         and "Skipped 2 channels due to fetch errors" in str(event.get("message", ""))
         for event in events
     )
+
+
+def test_prepare_jobs_batch_round_robins_channels_for_faster_first_queue(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    session = VaultSession(user_id="u1", username="user#0001", token="t", password="pw")
+    calls = {"c1": 0, "c2": 0}
+
+    async def _fetch(channel_id: str, *, before: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+        del limit
+        calls[channel_id] += 1
+        if channel_id == "c1":
+            if before is None:
+                return [_message_payload(mid, author_id="other") for mid in range(500, 400, -1)]
+            return []
+        if channel_id == "c2" and before is None:
+            return [_message_payload(250, author_id="u1")]
+        return []
+
+    with patch("vaultcord.service.DiscordClient") as client_cls, patch(
+        "vaultcord.service.MessageScraper.discover_channel_ids", new=AsyncMock(return_value=["c1", "c2"])
+    ):
+        client_cls.return_value.__aenter__ = AsyncMock(return_value=client_cls.return_value)
+        client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+        client_cls.return_value.fetch_channel_messages = AsyncMock(side_effect=_fetch)
+
+        result = asyncio.run(
+            service.prepare_jobs_batch(
+                session,
+                guild_id="g1",
+                mode="all",
+                order_direction="newest",
+                batch_size=1,
+            )
+        )
+
+    assert result.queued == 1
+    assert calls["c1"] == 1
+    assert calls["c2"] == 1

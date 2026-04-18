@@ -35,25 +35,35 @@ class MessageScraper:
             return True
         return message_mode == selected_mode
 
-    async def discover_channel_ids(self, guild_id: str) -> list[str]:
+    async def discover_channel_ids(
+        self,
+        guild_id: str,
+        *,
+        on_discovery_progress: Callable[[int, int], None] | None = None,
+    ) -> list[str]:
         channels = await self.client.list_guild_channels(guild_id)
         parent_channels = [c for c in channels if int(c.get("type", -1)) in CHANNEL_TEXT_TYPES]
 
         channel_ids: set[str] = {str(c["id"]) for c in parent_channels}
+        total_parents = len(parent_channels)
 
         threads = await self.client.list_active_threads(guild_id)
         for thread in threads:
             if int(thread.get("type", -1)) in CHANNEL_THREAD_TYPES:
                 channel_ids.add(str(thread["id"]))
 
-        for channel in parent_channels:
+        for index, channel in enumerate(parent_channels, start=1):
             try:
                 archived = await self.client.list_archived_threads(str(channel["id"]))
             except DiscordApiError:
+                if on_discovery_progress:
+                    on_discovery_progress(index, total_parents)
                 continue
             for thread in archived:
                 if int(thread.get("type", -1)) in CHANNEL_THREAD_TYPES:
                     channel_ids.add(str(thread["id"]))
+            if on_discovery_progress:
+                on_discovery_progress(index, total_parents)
             await asyncio.sleep(0.1)
 
         return sorted(channel_ids)

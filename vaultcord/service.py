@@ -149,7 +149,42 @@ class VaultService:
             scraper = MessageScraper(client=client, user_id=session.user_id)
             state = self.store.read_setting(cursor_key)
             if not state:
-                channel_ids = await scraper.discover_channel_ids(guild_id)
+                if event_sink:
+                    event_sink(
+                        {
+                            "type": "log",
+                            "level": "INFO",
+                            "message": "Discovering channels/threads for initial scan...",
+                        }
+                    )
+
+                discovery_last_logged = 0
+
+                def _on_discovery_progress(done: int, total: int) -> None:
+                    nonlocal discovery_last_logged
+                    if not event_sink:
+                        return
+                    if total <= 0:
+                        return
+                    should_log = done == 1 or done == total or (done - discovery_last_logged >= 25)
+                    if not should_log:
+                        return
+                    discovery_last_logged = done
+                    event_sink(
+                        {
+                            "type": "log",
+                            "level": "INFO",
+                            "message": (
+                                "Discovery progress: scanned "
+                                f"{done}/{total} parent channels for archived threads"
+                            ),
+                        }
+                    )
+
+                channel_ids = await scraper.discover_channel_ids(
+                    guild_id,
+                    on_discovery_progress=_on_discovery_progress,
+                )
                 state = {
                     "version": 1,
                     "channel_ids": channel_ids,
@@ -168,11 +203,16 @@ class VaultService:
 
             channel_ids = [str(v) for v in list(state.get("channel_ids", []))]
             channel_index = int(state.get("channel_index", 0))
+            if channel_ids:
+                channel_index = channel_index % len(channel_ids)
+            else:
+                channel_index = 0
             before_by_channel: dict[str, str] = {
                 str(k): str(v) for k, v in dict(state.get("before_by_channel", {})).items()
             }
+            pages_scanned = 0
 
-            while channel_index < len(channel_ids) and queued < batch_size:
+            while channel_ids and queued < batch_size:
                 channel_id = channel_ids[channel_index]
                 before = before_by_channel.get(channel_id)
                 try:
@@ -182,16 +222,33 @@ class VaultService:
                     failed_channels += 1
                     fetch_error_breakdown[status_key] += 1
                     LOGGER.debug("Skipping channel %s after API error status=%s", channel_id, status_key)
-                    channel_index += 1
+                    channel_ids.pop(channel_index)
                     before_by_channel.pop(channel_id, None)
+                    if channel_ids and channel_index >= len(channel_ids):
+                        channel_index = 0
                     continue
 
                 if not batch:
-                    channel_index += 1
+                    channel_ids.pop(channel_index)
                     before_by_channel.pop(channel_id, None)
+                    if channel_ids and channel_index >= len(channel_ids):
+                        channel_index = 0
                     continue
 
-                last_seen_id = str(batch[0].get("id", "")) if batch else ""
+                pages_scanned += 1
+                if event_sink and pages_scanned % 25 == 0:
+                    event_sink(
+                        {
+                            "type": "log",
+                            "level": "INFO",
+                            "message": (
+                                f"Preparing batch: pages={pages_scanned} "
+                                f"active_channels={len(channel_ids)} queued={queued}"
+                            ),
+                        }
+                    )
+
+                last_seen_id = str(batch[-1].get("id", "")) if batch else ""
                 for raw_message in batch:
                     last_seen_id = str(raw_message.get("id", "")) or last_seen_id
                     author_id = str((raw_message.get("author") or {}).get("id") or "")
@@ -264,9 +321,11 @@ class VaultService:
                     before_by_channel[channel_id] = last_seen_id
                 if queued >= batch_size:
                     break
+                if channel_ids:
+                    channel_index = (channel_index + 1) % len(channel_ids)
                 await asyncio.sleep(0.2)
 
-            exhausted = channel_index >= len(channel_ids)
+            exhausted = not channel_ids
             if failed_channels > 0 and event_sink:
                 breakdown = self._format_fetch_error_breakdown(dict(fetch_error_breakdown))
                 event_sink(
