@@ -148,3 +148,37 @@ def test_claim_next_job_respects_order_direction(tmp_path: Path) -> None:
     oldest = store.claim_next_job(max_attempts=3, order_direction=ORDER_OLDEST)
     assert oldest is not None
     assert oldest.discord_message_id == "100"
+
+
+def test_claim_next_job_respects_scope_filters(tmp_path: Path) -> None:
+    store = build_store(tmp_path)
+    entries = [
+        ("id-s1", "m-s1", "g1", "all"),
+        ("id-s2", "m-s2", "g2", "links"),
+    ]
+    for vault_id, msg_id, guild_id, mode in entries:
+        store.insert_archived_message(
+            vault_id=vault_id,
+            discord_message_id=msg_id,
+            channel_id="c1",
+            guild_id=guild_id,
+            author_id="u1",
+            mode=mode,
+            reference_text=f"vault://{vault_id}",
+            encrypted_payload={"ciphertext_b64": "a", "nonce_b64": "b", "salt_b64": "c"},
+        )
+        store.enqueue_job(
+            discord_message_id=msg_id,
+            channel_id="c1",
+            guild_id=guild_id,
+            mode=mode,
+            vault_id=vault_id,
+            priority=None,
+        )
+
+    scoped = store.claim_next_job(max_attempts=3, guild_id="g1", mode="all")
+    assert scoped is not None
+    assert scoped.discord_message_id == "m-s1"
+
+    none_left = store.claim_next_job(max_attempts=3, guild_id="g1", mode="all")
+    assert none_left is None

@@ -96,6 +96,8 @@ class ScrubWorker:
                         max_attempts=self.max_retries,
                         retry_failed_only=retry_failed_only,
                         order_direction=order_direction,
+                        guild_id=guild_id,
+                        mode=mode,
                     )
                     if not job:
                         progress = self.store.get_progress(
@@ -176,13 +178,16 @@ class ScrubWorker:
                             error_message=f"status={exc.status_code}",
                         )
                         if attempts >= self.max_retries:
+                            detail = ""
+                            if exc.status_code == 403:
+                                detail = " (forbidden: missing permission or message is not editable)"
                             event_sink(
                                 {
                                     "type": "log",
                                     "level": "FAIL",
                                     "message": (
                                         f"Message {job.discord_message_id} failed permanently "
-                                        f"(status={status_label})"
+                                        f"(status={status_label}){detail}"
                                     ),
                                 }
                             )

@@ -206,6 +206,8 @@ class VaultStore:
         max_attempts: int,
         retry_failed_only: bool = False,
         order_direction: str = ORDER_NEWEST,
+        guild_id: str | None = None,
+        mode: str | None = None,
     ) -> QueueJob | None:
         now = datetime.now(UTC)
         now_iso = now.isoformat()
@@ -220,6 +222,13 @@ class VaultStore:
             else:
                 where = "status IN (?, ?)"
                 params = [STATUS_PENDING, STATUS_FAILED]
+
+            if guild_id:
+                where += " AND guild_id = ?"
+                params.append(guild_id)
+            if mode:
+                where += " AND mode = ?"
+                params.append(mode)
 
             row = conn.execute(
                 f"""
