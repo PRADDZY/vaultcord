@@ -60,6 +60,7 @@ class ScrubWorker:
         start = perf_counter()
         session_deadline = datetime.now(UTC) + timedelta(hours=self._random_run_hours())
         completed = False
+        initial_batch_preparing_logged = False
         event_sink({"type": "status", "status": "running"})
         inhibitor = SleepInhibitor()
         inhibited, detail = inhibitor.acquire()
@@ -100,26 +101,47 @@ class ScrubWorker:
                         mode=mode,
                     )
                     if not job:
+                        has_retryable_work = self.store.has_retryable_work(
+                            guild_id=guild_id,
+                            mode=mode,
+                            max_attempts=self.max_retries,
+                            retry_failed_only=retry_failed_only,
+                        )
+                        if (
+                            not has_retryable_work
+                            and queue_refill is not None
+                            and not control.stop_event.is_set()
+                        ):
+                            if not initial_batch_preparing_logged:
+                                initial_batch_preparing_logged = True
+                                event_sink(
+                                    {
+                                        "type": "log",
+                                        "level": "INFO",
+                                        "message": "Preparing first batch...",
+                                    }
+                                )
+                            try:
+                                refilled = await queue_refill()
+                            except Exception:  # pragma: no cover - defensive guard
+                                LOGGER.exception("Queue refill callback failed")
+                                refilled = False
+                            if refilled:
+                                continue
+                            has_retryable_work = self.store.has_retryable_work(
+                                guild_id=guild_id,
+                                mode=mode,
+                                max_attempts=self.max_retries,
+                                retry_failed_only=retry_failed_only,
+                            )
+
                         progress = self.store.get_progress(
                             guild_id=guild_id,
                             mode=mode,
                             max_attempts=self.max_retries,
                         )
                         event_sink({"type": "progress", **progress, "elapsed_seconds": int(perf_counter() - start)})
-                        if not self.store.has_retryable_work(
-                            guild_id=guild_id,
-                            mode=mode,
-                            max_attempts=self.max_retries,
-                            retry_failed_only=retry_failed_only,
-                        ):
-                            if queue_refill and not control.stop_event.is_set():
-                                try:
-                                    refilled = await queue_refill()
-                                except Exception:  # pragma: no cover - defensive guard
-                                    LOGGER.exception("Queue refill callback failed")
-                                    refilled = False
-                                if refilled:
-                                    continue
+                        if not has_retryable_work:
                             completed = True
                             elapsed_seconds = int(perf_counter() - start)
                             event_sink(

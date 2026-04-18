@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Callable
 
@@ -25,6 +25,8 @@ class PrepareResult:
     queued: int
     skipped: int
     already_referenced: int
+    failed_channels: int = 0
+    fetch_error_breakdown: dict[str, int] = field(default_factory=dict)
     exhausted: bool = False
 
 
@@ -88,6 +90,8 @@ class VaultService:
         queued = 0
         skipped = 0
         already_referenced = 0
+        failed_channels = 0
+        fetch_error_breakdown: Counter[str] = Counter()
         exhausted = False
 
         while True:
@@ -102,6 +106,8 @@ class VaultService:
             queued += batch.queued
             skipped += batch.skipped
             already_referenced += batch.already_referenced
+            failed_channels += batch.failed_channels
+            fetch_error_breakdown.update(batch.fetch_error_breakdown)
             exhausted = batch.exhausted
             if batch.exhausted:
                 break
@@ -112,6 +118,8 @@ class VaultService:
             queued=queued,
             skipped=skipped,
             already_referenced=already_referenced,
+            failed_channels=failed_channels,
+            fetch_error_breakdown=dict(fetch_error_breakdown),
             exhausted=exhausted,
         )
 
@@ -132,6 +140,8 @@ class VaultService:
         queued = 0
         skipped = 0
         already_referenced = 0
+        failed_channels = 0
+        fetch_error_breakdown: Counter[str] = Counter()
         exhausted = False
         cursor_key = self._scrape_cursor_key(guild_id=guild_id, mode=mode, order_direction=order_direction)
 
@@ -168,7 +178,10 @@ class VaultService:
                 try:
                     batch = await client.fetch_channel_messages(channel_id, before=before, limit=100)
                 except DiscordApiError as exc:
-                    LOGGER.warning("Skipping channel %s after API error: %s", channel_id, exc)
+                    status_key = str(exc.status_code) if exc.status_code is not None else "unknown"
+                    failed_channels += 1
+                    fetch_error_breakdown[status_key] += 1
+                    LOGGER.debug("Skipping channel %s after API error status=%s", channel_id, status_key)
                     channel_index += 1
                     before_by_channel.pop(channel_id, None)
                     continue
@@ -254,6 +267,15 @@ class VaultService:
                 await asyncio.sleep(0.2)
 
             exhausted = channel_index >= len(channel_ids)
+            if failed_channels > 0 and event_sink:
+                breakdown = self._format_fetch_error_breakdown(dict(fetch_error_breakdown))
+                event_sink(
+                    {
+                        "type": "log",
+                        "level": "SKIP",
+                        "message": f"Skipped {failed_channels} channels due to fetch errors ({breakdown})",
+                    }
+                )
             if exhausted:
                 self.store.delete_setting(cursor_key)
             else:
@@ -271,6 +293,8 @@ class VaultService:
             queued=queued,
             skipped=skipped,
             already_referenced=already_referenced,
+            failed_channels=failed_channels,
+            fetch_error_breakdown=dict(fetch_error_breakdown),
             exhausted=exhausted,
         )
 
@@ -284,6 +308,20 @@ class VaultService:
             return int(message_id)
         except (TypeError, ValueError):
             return None
+
+    @staticmethod
+    def _format_fetch_error_breakdown(breakdown: dict[str, int]) -> str:
+        if not breakdown:
+            return "none"
+
+        def _sort_key(item: tuple[str, int]) -> tuple[int, str]:
+            status, _count = item
+            try:
+                return (0, f"{int(status):04d}")
+            except ValueError:
+                return (1, status)
+
+        return ", ".join(f"{status}={count}" for status, count in sorted(breakdown.items(), key=_sort_key))
 
     def decrypt_vault_message(self, vault_id: str, password: str) -> dict[str, Any]:
         encrypted = self.store.get_encrypted_message(vault_id)

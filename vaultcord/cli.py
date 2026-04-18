@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import signal
+from collections import Counter
 from datetime import timedelta
 from typing import Any
 
@@ -109,7 +110,8 @@ def scrub(
             console.print(table)
             return
 
-        if runtime.service.has_retryable_queue(guild_id=guild_id, mode=mode):
+        resume_queue = runtime.service.has_retryable_queue(guild_id=guild_id, mode=mode)
+        if resume_queue:
             console.print("[cyan]Resume detected:[/cyan] draining existing queue before fetching new batches")
         else:
             console.print(
@@ -134,9 +136,12 @@ def scrub(
 
         async def _run() -> None:
             scan_exhausted = False
+            total_queued = 0
+            total_failed_channels = 0
+            aggregate_errors: Counter[str] = Counter()
 
             async def _queue_refill() -> bool:
-                nonlocal scan_exhausted
+                nonlocal scan_exhausted, total_queued, total_failed_channels, aggregate_errors
                 if scan_exhausted:
                     return False
                 prepare = await runtime.service.prepare_jobs_batch(
@@ -147,15 +152,40 @@ def scrub(
                     batch_size=runtime.config.batch_prepare_size,
                     event_sink=_event_sink,
                 )
-                if prepare.queued > 0 or prepare.skipped > 0 or prepare.already_referenced > 0:
+                total_queued += prepare.queued
+                total_failed_channels += prepare.failed_channels
+                aggregate_errors.update(prepare.fetch_error_breakdown)
+
+                if (
+                    prepare.queued > 0
+                    or prepare.skipped > 0
+                    or prepare.already_referenced > 0
+                    or prepare.failed_channels > 0
+                ):
+                    breakdown = ", ".join(f"{k}={v}" for k, v in sorted(prepare.fetch_error_breakdown.items()))
+                    failed_suffix = (
+                        f" failed_channels={prepare.failed_channels}"
+                        + (f" ({breakdown})" if breakdown else "")
+                        if prepare.failed_channels > 0
+                        else ""
+                    )
                     console.print(
                         "[cyan]Batch prepared:[/cyan] "
                         f"queued={prepare.queued} skipped={prepare.skipped} "
-                        f"already_ref={prepare.already_referenced}"
+                        f"already_ref={prepare.already_referenced}{failed_suffix}"
                     )
                 if prepare.exhausted:
                     scan_exhausted = True
                     console.print("[cyan]Scan exhausted:[/cyan] no further messages to queue")
+                    if not resume_queue and total_queued == 0:
+                        if total_failed_channels > 0:
+                            aggregate = ", ".join(f"{k}={v}" for k, v in sorted(aggregate_errors.items()))
+                            console.print(
+                                "[yellow]No queueable messages found.[/yellow] "
+                                f"Some channels were inaccessible ({aggregate})."
+                            )
+                        else:
+                            console.print("[cyan]No eligible user messages found for selected mode/order.[/cyan]")
                 return prepare.queued > 0
 
             await worker.run(

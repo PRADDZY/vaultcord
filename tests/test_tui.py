@@ -59,6 +59,22 @@ def test_tui_shows_success_completion_banner(tmp_path: Path) -> None:
     assert app.status == "Completed"
 
 
+def test_tui_preserves_zero_queue_completion_hint(tmp_path: Path) -> None:
+    app = build_tui(tmp_path)
+    app.completion_level = "INFO"
+    app.completion_message = "No eligible user messages found for selected mode/order."
+    app._handle_completed(
+        {
+            "done": 0,
+            "failed": 0,
+            "remaining": 0,
+            "elapsed_seconds": 9,
+        }
+    )
+    assert app.completion_message == "No eligible user messages found for selected mode/order."
+    assert app.completion_level == "INFO"
+
+
 def test_log_line_truncates_and_keeps_columns(tmp_path: Path) -> None:
     app = build_tui(tmp_path)
     line = app._format_log_line(level="INFO", message="x" * 500, max_width=68)

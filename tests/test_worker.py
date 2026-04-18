@@ -230,6 +230,7 @@ def test_worker_refills_queue_via_callback(tmp_path: Path) -> None:
     )
     control = WorkerControl()
     calls = {"count": 0}
+    events: list[dict] = []
 
     async def refill_once() -> bool:
         calls["count"] += 1
@@ -269,7 +270,7 @@ def test_worker_refills_queue_via_callback(tmp_path: Path) -> None:
                 mode="all",
                 retry_failed_only=False,
                 control=control,
-                event_sink=lambda _event: None,
+                event_sink=events.append,
                 queue_refill=refill_once,
             )
 
@@ -277,3 +278,11 @@ def test_worker_refills_queue_via_callback(tmp_path: Path) -> None:
     progress = store.get_progress(guild_id="g1", mode="all")
     assert progress["done"] == 1
     assert calls["count"] >= 2
+    assert any(event.get("type") == "log" and "Preparing first batch" in str(event.get("message", "")) for event in events)
+    assert not any(
+        event.get("type") == "progress"
+        and int(event.get("total", 0)) == 0
+        and int(event.get("done", 0)) == 0
+        and int(event.get("remaining", 0)) == 0
+        for event in events
+    )

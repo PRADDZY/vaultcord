@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections import deque
+from collections import Counter, deque
 from datetime import datetime
 from queue import Empty, Queue
 from time import monotonic
@@ -538,12 +538,16 @@ class VaultCordTUI:
             request_timeout_seconds=self.config.request_timeout_seconds,
             max_retries=self.config.max_retries,
         )
+        had_existing_queue = retry_failed_only or self.service.has_retryable_queue(guild_id=guild_id, mode=mode)
 
         async def _run_worker() -> None:
             scan_exhausted = False
+            total_queued = 0
+            total_failed_channels = 0
+            aggregate_errors: Counter[str] = Counter()
 
             async def _queue_refill() -> bool:
-                nonlocal scan_exhausted
+                nonlocal scan_exhausted, total_queued, total_failed_channels, aggregate_errors
                 if retry_failed_only:
                     return False
                 if scan_exhausted:
@@ -557,11 +561,20 @@ class VaultCordTUI:
                     batch_size=self.config.batch_prepare_size,
                     event_sink=self._emit_event,
                 )
+                total_queued += prepare_result.queued
+                total_failed_channels += prepare_result.failed_channels
+                aggregate_errors.update(prepare_result.fetch_error_breakdown)
+
                 if (
                     prepare_result.queued > 0
                     or prepare_result.skipped > 0
                     or prepare_result.already_referenced > 0
+                    or prepare_result.failed_channels > 0
                 ):
+                    failed_suffix = ""
+                    if prepare_result.failed_channels > 0:
+                        breakdown = self._format_fetch_error_breakdown(prepare_result.fetch_error_breakdown)
+                        failed_suffix = f" failed_channels={prepare_result.failed_channels} ({breakdown})"
                     self._emit_event(
                         {
                             "type": "log",
@@ -569,7 +582,7 @@ class VaultCordTUI:
                             "message": (
                                 "Batch prepared "
                                 f"queued={prepare_result.queued} skipped={prepare_result.skipped} "
-                                f"already_ref={prepare_result.already_referenced}"
+                                f"already_ref={prepare_result.already_referenced}{failed_suffix}"
                             ),
                         }
                     )
@@ -582,6 +595,27 @@ class VaultCordTUI:
                             "message": "Scan exhausted: no further messages to queue",
                         }
                     )
+                    if not had_existing_queue and total_queued == 0:
+                        if total_failed_channels > 0:
+                            breakdown = self._format_fetch_error_breakdown(dict(aggregate_errors))
+                            self._emit_event(
+                                {
+                                    "type": "banner",
+                                    "level": "SKIP",
+                                    "message": (
+                                        "No queueable messages found; some channels were inaccessible "
+                                        f"({breakdown})."
+                                    ),
+                                }
+                            )
+                        else:
+                            self._emit_event(
+                                {
+                                    "type": "banner",
+                                    "level": "INFO",
+                                    "message": "No eligible user messages found for selected mode/order.",
+                                }
+                            )
                 return prepare_result.queued > 0
 
             await worker.run(
@@ -708,6 +742,7 @@ class VaultCordTUI:
         failed = int(payload.get("failed", 0))
         remaining = int(payload.get("remaining", 0))
         elapsed_seconds = int(payload.get("elapsed_seconds", 0))
+        has_preexisting_completion_hint = self.completion_message not in {"Awaiting run...", "Run in progress..."}
         self._append_log(
             "OK",
             f"Run completed: processed={done} failed={failed} remaining={remaining} elapsed={elapsed_seconds}s",
@@ -716,6 +751,9 @@ class VaultCordTUI:
             self.completion_level = "FAIL"
             self.completion_message = "Completed with failures. Use Retry Failed to continue remaining work."
             self._append_log("INFO", "Use Retry Failed to requeue failed items.")
+        elif done == 0 and remaining == 0 and has_preexisting_completion_hint:
+            # Preserve explicit zero-queue completion hints emitted during scan/refill.
+            pass
         elif remaining == 0:
             self.completion_level = "OK"
             self.completion_message = "Completed: all queued messages archived and replaced."
@@ -808,6 +846,12 @@ class VaultCordTUI:
         if max_chars <= 3:
             return "." * max_chars
         return f"{single_line[: max_chars - 3]}..."
+
+    @staticmethod
+    def _format_fetch_error_breakdown(breakdown: dict[str, int]) -> str:
+        if not breakdown:
+            return "none"
+        return ", ".join(f"{status}={count}" for status, count in sorted(breakdown.items()))
 
     def _format_log_line(self, *, level: str, message: str, max_width: int = 120) -> str:
         ts = datetime.now().strftime("%H:%M:%S")

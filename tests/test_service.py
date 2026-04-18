@@ -2,6 +2,7 @@ import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
+from vaultcord.discord_api import DiscordApiError
 from vaultcord.models import AppConfig, SchedulerConfig, VaultSession
 from vaultcord.service import VaultService
 from vaultcord.storage import VaultStore
@@ -161,3 +162,45 @@ def test_prepare_jobs_batch_resumes_from_cursor(tmp_path: Path) -> None:
     assert progress["total"] == 10
     cursor_key = service._scrape_cursor_key(guild_id="g1", mode="all", order_direction="newest")
     assert service.store.read_setting(cursor_key) is None
+
+
+def test_prepare_jobs_batch_aggregates_channel_fetch_failures(tmp_path: Path) -> None:
+    service = build_service(tmp_path)
+    session = VaultSession(user_id="u1", username="user#0001", token="t", password="pw")
+    events: list[dict[str, object]] = []
+
+    async def _fetch(channel_id: str, *, before: str | None = None, limit: int = 100) -> list[dict[str, object]]:
+        del before, limit
+        if channel_id == "c1":
+            raise DiscordApiError("forbidden", status_code=403)
+        if channel_id == "c2":
+            raise DiscordApiError("not found", status_code=404)
+        return []
+
+    with patch("vaultcord.service.DiscordClient") as client_cls, patch(
+        "vaultcord.service.MessageScraper.discover_channel_ids", new=AsyncMock(return_value=["c1", "c2", "c3"])
+    ):
+        client_cls.return_value.__aenter__ = AsyncMock(return_value=client_cls.return_value)
+        client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+        client_cls.return_value.fetch_channel_messages = AsyncMock(side_effect=_fetch)
+
+        result = asyncio.run(
+            service.prepare_jobs_batch(
+                session,
+                guild_id="g1",
+                mode="all",
+                order_direction="newest",
+                batch_size=1000,
+                event_sink=events.append,
+            )
+        )
+
+    assert result.exhausted
+    assert result.queued == 0
+    assert result.failed_channels == 2
+    assert result.fetch_error_breakdown == {"403": 1, "404": 1}
+    assert any(
+        event.get("type") == "log"
+        and "Skipped 2 channels due to fetch errors" in str(event.get("message", ""))
+        for event in events
+    )
