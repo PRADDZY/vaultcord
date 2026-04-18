@@ -15,6 +15,7 @@ from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, VSplit
+from prompt_toolkit.layout.dimension import Dimension
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.styles import Style
@@ -196,9 +197,9 @@ class VaultCordTUI:
 
         return HSplit(
             [
-                top_bar,
-                workspace,
-                logs,
+                Box(top_bar, height=5, padding=0),
+                Box(workspace, height=Dimension(weight=2), padding=0),
+                Box(logs, height=Dimension(weight=3), padding=0),
             ],
             padding=1,
         )
@@ -389,26 +390,9 @@ class VaultCordTUI:
                         {
                             "type": "log",
                             "level": "INFO",
-                            "message": f"Scrub run started for guild={guild_id} mode={mode} order={order}",
-                        }
-                    )
-                    prepare_result = asyncio.run(
-                        self.service.prepare_jobs(
-                            self.session,
-                            guild_id=guild_id,
-                            mode=mode,
-                            order_direction=order,
-                            event_sink=self._emit_event,
-                        )
-                    )
-                    self._emit_event(
-                        {
-                            "type": "log",
-                            "level": "OK",
                             "message": (
-                                "Prepared queue "
-                                f"queued={prepare_result.queued} skipped={prepare_result.skipped} "
-                                f"already_ref={prepare_result.already_referenced}"
+                                f"Incremental batching enabled for guild={guild_id} mode={mode} "
+                                f"order={order} batch_size={self.config.batch_prepare_size}"
                             ),
                         }
                     )
@@ -482,6 +466,50 @@ class VaultCordTUI:
         )
 
         async def _run_worker() -> None:
+            scan_exhausted = False
+
+            async def _queue_refill() -> bool:
+                nonlocal scan_exhausted
+                if retry_failed_only:
+                    return False
+                if scan_exhausted:
+                    return False
+
+                prepare_result = await self.service.prepare_jobs_batch(
+                    self.session,
+                    guild_id=guild_id,
+                    mode=mode,
+                    order_direction=order_direction,
+                    batch_size=self.config.batch_prepare_size,
+                    event_sink=self._emit_event,
+                )
+                if (
+                    prepare_result.queued > 0
+                    or prepare_result.skipped > 0
+                    or prepare_result.already_referenced > 0
+                ):
+                    self._emit_event(
+                        {
+                            "type": "log",
+                            "level": "OK",
+                            "message": (
+                                "Batch prepared "
+                                f"queued={prepare_result.queued} skipped={prepare_result.skipped} "
+                                f"already_ref={prepare_result.already_referenced}"
+                            ),
+                        }
+                    )
+                if prepare_result.exhausted:
+                    scan_exhausted = True
+                    self._emit_event(
+                        {
+                            "type": "log",
+                            "level": "INFO",
+                            "message": "Scan exhausted: no further messages to queue",
+                        }
+                    )
+                return prepare_result.queued > 0
+
             await worker.run(
                 guild_id=guild_id,
                 mode=mode,
@@ -489,6 +517,7 @@ class VaultCordTUI:
                 order_direction=order_direction,
                 control=self._worker_control or WorkerControl(),
                 event_sink=self._emit_event,
+                queue_refill=_queue_refill,
             )
 
         try:

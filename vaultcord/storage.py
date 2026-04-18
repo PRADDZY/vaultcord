@@ -117,6 +117,10 @@ class VaultStore:
             return None
         return json.loads(str(row["value"]))
 
+    def delete_setting(self, key: str) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM settings WHERE key = ?", (key,))
+
     def vault_exists_for_message(self, discord_message_id: str) -> bool:
         with self._connect() as conn:
             row = conn.execute(

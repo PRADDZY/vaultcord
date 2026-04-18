@@ -61,6 +61,7 @@ def _default_config() -> dict:
         "log_path": str(default_log_path()),
         "request_timeout_seconds": DEFAULT_REQUEST_TIMEOUT,
         "max_retries": DEFAULT_MAX_RETRIES,
+        "batch_prepare_size": 1000,
         "scheduler": asdict(scheduler),
     }
 
@@ -90,11 +91,16 @@ def load_config() -> AppConfig:
     )
     scheduler_config = _validate_scheduler(scheduler_config)
 
+    batch_prepare_size = int(raw.get("batch_prepare_size", 1000))
+    if batch_prepare_size <= 0:
+        raise ValueError("batch_prepare_size must be a positive integer")
+
     return AppConfig(
         data_dir=_expand_path(str(raw.get("data_dir", default_data_dir()))),
         db_path=_expand_path(str(raw.get("db_path", default_db_path()))),
         log_path=_expand_path(str(raw.get("log_path", default_log_path()))),
         request_timeout_seconds=float(raw.get("request_timeout_seconds", DEFAULT_REQUEST_TIMEOUT)),
         max_retries=int(raw.get("max_retries", DEFAULT_MAX_RETRIES)),
+        batch_prepare_size=batch_prepare_size,
         scheduler=scheduler_config,
     )

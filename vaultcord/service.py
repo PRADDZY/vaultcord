@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Callable
 
-from .constants import MODE_ALL, ORDER_NEWEST, ORDER_OLDEST, STATUS_DONE, STATUS_FAILED, STATUS_PENDING, VAULT_PREFIX
+from .constants import MODE_ALL, ORDER_NEWEST, ORDER_OLDEST, STATUS_PENDING, VAULT_PREFIX
 from .discord_api import DiscordClient, DiscordApiError
 from .editor import generate_vault_id, make_reference
 from .models import AppConfig, VaultSession
@@ -25,6 +25,7 @@ class PrepareResult:
     queued: int
     skipped: int
     already_referenced: int
+    exhausted: bool = False
 
 
 class VaultService:
@@ -84,76 +85,198 @@ class VaultService:
         order_direction: str = ORDER_NEWEST,
         event_sink: Callable[[dict[str, Any]], None] | None = None,
     ) -> PrepareResult:
-        if order_direction not in {ORDER_NEWEST, ORDER_OLDEST}:
-            raise ValueError(f"Unsupported order direction: {order_direction}")
         queued = 0
         skipped = 0
         already_referenced = 0
+        exhausted = False
+
+        while True:
+            batch = await self.prepare_jobs_batch(
+                session,
+                guild_id=guild_id,
+                mode=mode,
+                order_direction=order_direction,
+                batch_size=self.config.batch_prepare_size,
+                event_sink=event_sink,
+            )
+            queued += batch.queued
+            skipped += batch.skipped
+            already_referenced += batch.already_referenced
+            exhausted = batch.exhausted
+            if batch.exhausted:
+                break
+            if batch.queued == 0:
+                break
+
+        return PrepareResult(
+            queued=queued,
+            skipped=skipped,
+            already_referenced=already_referenced,
+            exhausted=exhausted,
+        )
+
+    async def prepare_jobs_batch(
+        self,
+        session: VaultSession,
+        *,
+        guild_id: str,
+        mode: str,
+        order_direction: str = ORDER_NEWEST,
+        batch_size: int = 1000,
+        event_sink: Callable[[dict[str, Any]], None] | None = None,
+    ) -> PrepareResult:
+        if order_direction not in {ORDER_NEWEST, ORDER_OLDEST}:
+            raise ValueError(f"Unsupported order direction: {order_direction}")
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+        queued = 0
+        skipped = 0
+        already_referenced = 0
+        exhausted = False
+        cursor_key = self._scrape_cursor_key(guild_id=guild_id, mode=mode, order_direction=order_direction)
 
         async with DiscordClient(token=session.token, timeout_seconds=self.config.request_timeout_seconds) as client:
             scraper = MessageScraper(client=client, user_id=session.user_id)
-
-            async for message in scraper.iter_user_messages(guild_id=guild_id, mode=mode):
-                if message.content.startswith(VAULT_PREFIX):
-                    already_referenced += 1
-                    if event_sink:
-                        event_sink({
-                            "type": "log",
-                            "level": "SKIP",
-                            "message": f"{message.message_id} already contains vault reference",
-                        })
-                    continue
-
-                if self.store.vault_exists_for_message(message.message_id):
-                    skipped += 1
-                    continue
-
-                payload = {
-                    "message_id": message.message_id,
-                    "channel_id": message.channel_id,
-                    "guild_id": message.guild_id,
-                    "author_id": message.author_id,
-                    "content": message.content,
-                    "attachments": message.attachments,
-                    "timestamp": message.timestamp,
-                    "archived_at": datetime.now(UTC).isoformat(),
+            state = self.store.read_setting(cursor_key)
+            if not state:
+                channel_ids = await scraper.discover_channel_ids(guild_id)
+                state = {
+                    "version": 1,
+                    "channel_ids": channel_ids,
+                    "channel_index": 0,
+                    "before_by_channel": {},
                 }
+                self.store.save_setting(cursor_key, state)
+                if event_sink:
+                    event_sink(
+                        {
+                            "type": "log",
+                            "level": "INFO",
+                            "message": f"Discovered {len(channel_ids)} channels/threads to scan",
+                        }
+                    )
 
-                encrypted_payload = encrypt_message_payload(payload, password=session.password)
-                vault_id = generate_vault_id()
-                inserted_message = self.store.insert_archived_message(
-                    vault_id=vault_id,
-                    discord_message_id=message.message_id,
-                    channel_id=message.channel_id,
-                    guild_id=message.guild_id,
-                    author_id=message.author_id,
-                    mode=mode,
-                    reference_text=make_reference(vault_id),
-                    encrypted_payload=encrypted_payload,
-                )
-                if not inserted_message:
-                    skipped += 1
+            channel_ids = [str(v) for v in list(state.get("channel_ids", []))]
+            channel_index = int(state.get("channel_index", 0))
+            before_by_channel: dict[str, str] = {
+                str(k): str(v) for k, v in dict(state.get("before_by_channel", {})).items()
+            }
+
+            while channel_index < len(channel_ids) and queued < batch_size:
+                channel_id = channel_ids[channel_index]
+                before = before_by_channel.get(channel_id)
+                try:
+                    batch = await client.fetch_channel_messages(channel_id, before=before, limit=100)
+                except DiscordApiError as exc:
+                    LOGGER.warning("Skipping channel %s after API error: %s", channel_id, exc)
+                    channel_index += 1
+                    before_by_channel.pop(channel_id, None)
                     continue
 
-                self.store.enqueue_job(
-                    discord_message_id=message.message_id,
-                    channel_id=message.channel_id,
-                    guild_id=message.guild_id,
-                    mode=mode,
-                    vault_id=vault_id,
-                    priority=self._message_priority(message.message_id),
-                    status=STATUS_PENDING,
+                if not batch:
+                    channel_index += 1
+                    before_by_channel.pop(channel_id, None)
+                    continue
+
+                last_seen_id = str(batch[0].get("id", "")) if batch else ""
+                for raw_message in batch:
+                    last_seen_id = str(raw_message.get("id", "")) or last_seen_id
+                    author_id = str((raw_message.get("author") or {}).get("id") or "")
+                    if author_id != session.user_id:
+                        continue
+                    message_mode = scraper.detect_mode(raw_message)
+                    if not scraper.mode_matches(message_mode, mode):
+                        continue
+
+                    content = str(raw_message.get("content") or "")
+                    if content.startswith(VAULT_PREFIX):
+                        already_referenced += 1
+                        continue
+
+                    message_id = str(raw_message.get("id") or "")
+                    if not message_id:
+                        continue
+                    if self.store.vault_exists_for_message(message_id):
+                        skipped += 1
+                        continue
+
+                    payload = {
+                        "message_id": message_id,
+                        "channel_id": channel_id,
+                        "guild_id": guild_id,
+                        "author_id": author_id,
+                        "content": content,
+                        "attachments": list(raw_message.get("attachments") or []),
+                        "timestamp": str(raw_message.get("timestamp") or ""),
+                        "archived_at": datetime.now(UTC).isoformat(),
+                    }
+                    encrypted_payload = encrypt_message_payload(payload, password=session.password)
+                    vault_id = generate_vault_id()
+                    inserted_message = self.store.insert_archived_message(
+                        vault_id=vault_id,
+                        discord_message_id=message_id,
+                        channel_id=channel_id,
+                        guild_id=guild_id,
+                        author_id=author_id,
+                        mode=mode,
+                        reference_text=make_reference(vault_id),
+                        encrypted_payload=encrypted_payload,
+                    )
+                    if not inserted_message:
+                        skipped += 1
+                        continue
+
+                    self.store.enqueue_job(
+                        discord_message_id=message_id,
+                        channel_id=channel_id,
+                        guild_id=guild_id,
+                        mode=mode,
+                        vault_id=vault_id,
+                        priority=self._message_priority(message_id),
+                        status=STATUS_PENDING,
+                    )
+                    queued += 1
+                    if event_sink and queued % 50 == 0:
+                        event_sink(
+                            {
+                                "type": "log",
+                                "level": "OK",
+                                "message": f"Prepared {queued} messages in current batch",
+                            }
+                        )
+                    if queued >= batch_size:
+                        break
+
+                if last_seen_id:
+                    before_by_channel[channel_id] = last_seen_id
+                if queued >= batch_size:
+                    break
+                await asyncio.sleep(0.2)
+
+            exhausted = channel_index >= len(channel_ids)
+            if exhausted:
+                self.store.delete_setting(cursor_key)
+            else:
+                self.store.save_setting(
+                    cursor_key,
+                    {
+                        "version": 1,
+                        "channel_ids": channel_ids,
+                        "channel_index": channel_index,
+                        "before_by_channel": before_by_channel,
+                    },
                 )
-                queued += 1
 
-                if event_sink and queued % 50 == 0:
-                    event_sink({
-                        "type": "log",
-                        "level": "OK",
-                        "message": f"Prepared {queued} messages so far",
-                    })
+        return PrepareResult(
+            queued=queued,
+            skipped=skipped,
+            already_referenced=already_referenced,
+            exhausted=exhausted,
+        )
 
-        return PrepareResult(queued=queued, skipped=skipped, already_referenced=already_referenced)
+    @staticmethod
+    def _scrape_cursor_key(*, guild_id: str, mode: str, order_direction: str) -> str:
+        return f"scrape_cursor:{guild_id}:{mode}:{order_direction}"
 
     @staticmethod
     def _message_priority(message_id: str) -> int | None:

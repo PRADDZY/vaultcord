@@ -209,3 +209,71 @@ def test_worker_retryable_429_uses_retry_after_delay(tmp_path: Path) -> None:
 
     asyncio.run(_run())
     assert recorded_delay["value"] >= 66
+
+
+def test_worker_refills_queue_via_callback(tmp_path: Path) -> None:
+    store = build_store(tmp_path)
+    session = VaultSession(user_id="u1", username="u", token="tok", password="pw")
+    worker = ScrubWorker(
+        store=store,
+        session=session,
+        scheduler=SchedulerConfig(
+            edit_delay_min_seconds=0,
+            edit_delay_max_seconds=0,
+            run_hours_min=1,
+            run_hours_max=1,
+            pause_hours_min=0,
+            pause_hours_max=0,
+        ),
+        request_timeout_seconds=5,
+        max_retries=3,
+    )
+    control = WorkerControl()
+    calls = {"count": 0}
+
+    async def refill_once() -> bool:
+        calls["count"] += 1
+        if calls["count"] > 1:
+            return False
+        inserted = store.insert_archived_message(
+            vault_id="id-refill",
+            discord_message_id="m-refill",
+            channel_id="c1",
+            guild_id="g1",
+            author_id="u1",
+            mode="all",
+            reference_text="vault://id-refill",
+            encrypted_payload={"ciphertext_b64": "a", "nonce_b64": "b", "salt_b64": "c"},
+        )
+        assert inserted
+        enqueued = store.enqueue_job(
+            discord_message_id="m-refill",
+            channel_id="c1",
+            guild_id="g1",
+            mode="all",
+            vault_id="id-refill",
+            priority=None,
+        )
+        assert enqueued
+        return True
+
+    async def _run() -> None:
+        with patch("vaultcord.worker.DiscordClient") as client_cls, patch(
+            "vaultcord.worker.apply_vault_reference",
+            new=AsyncMock(return_value=None),
+        ):
+            client_cls.return_value.__aenter__ = AsyncMock(return_value=client_cls.return_value)
+            client_cls.return_value.__aexit__ = AsyncMock(return_value=None)
+            await worker.run(
+                guild_id="g1",
+                mode="all",
+                retry_failed_only=False,
+                control=control,
+                event_sink=lambda _event: None,
+                queue_refill=refill_once,
+            )
+
+    asyncio.run(_run())
+    progress = store.get_progress(guild_id="g1", mode="all")
+    assert progress["done"] == 1
+    assert calls["count"] >= 2

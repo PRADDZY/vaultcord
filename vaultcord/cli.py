@@ -110,19 +110,11 @@ def scrub(
             return
 
         if runtime.service.has_retryable_queue(guild_id=guild_id, mode=mode):
-            console.print("[cyan]Resume detected:[/cyan] using existing queued work before re-scan")
+            console.print("[cyan]Resume detected:[/cyan] draining existing queue before fetching new batches")
         else:
-            prepare = asyncio.run(
-                runtime.service.prepare_jobs(
-                    session,
-                    guild_id=guild_id,
-                    mode=mode,
-                    order_direction=order,
-                )
-            )
             console.print(
-                "[cyan]Queue prepared:[/cyan] "
-                f"queued={prepare.queued} skipped={prepare.skipped} already_ref={prepare.already_referenced}"
+                "[cyan]Incremental batching enabled:[/cyan] "
+                f"batch_prepare_size={runtime.config.batch_prepare_size}"
             )
 
         worker = ScrubWorker(
@@ -141,6 +133,31 @@ def scrub(
         signal.signal(signal.SIGINT, _signal_handler)
 
         async def _run() -> None:
+            scan_exhausted = False
+
+            async def _queue_refill() -> bool:
+                nonlocal scan_exhausted
+                if scan_exhausted:
+                    return False
+                prepare = await runtime.service.prepare_jobs_batch(
+                    session,
+                    guild_id=guild_id,
+                    mode=mode,
+                    order_direction=order,
+                    batch_size=runtime.config.batch_prepare_size,
+                    event_sink=_event_sink,
+                )
+                if prepare.queued > 0 or prepare.skipped > 0 or prepare.already_referenced > 0:
+                    console.print(
+                        "[cyan]Batch prepared:[/cyan] "
+                        f"queued={prepare.queued} skipped={prepare.skipped} "
+                        f"already_ref={prepare.already_referenced}"
+                    )
+                if prepare.exhausted:
+                    scan_exhausted = True
+                    console.print("[cyan]Scan exhausted:[/cyan] no further messages to queue")
+                return prepare.queued > 0
+
             await worker.run(
                 guild_id=guild_id,
                 mode=mode,
@@ -148,6 +165,7 @@ def scrub(
                 order_direction=order,
                 control=control,
                 event_sink=_event_sink,
+                queue_refill=_queue_refill,
             )
 
         def _event_sink(event: dict[str, Any]) -> None:

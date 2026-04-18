@@ -133,7 +133,7 @@ Default data files:
 - `~/.vaultcord/vaultcord.db`
 - `~/.vaultcord/vaultcord.log`
 
-Scheduler windows and retry settings are configurable in `config.json`.
+Scheduler windows, retry settings, and `batch_prepare_size` (default `1000`) are configurable in `config.json`.
 
 ## Development
 

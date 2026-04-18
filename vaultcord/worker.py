@@ -8,6 +8,7 @@ import random
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from time import perf_counter
+from collections.abc import Awaitable
 from typing import Any, Callable
 
 from .constants import ORDER_NEWEST
@@ -20,6 +21,7 @@ from .storage import VaultStore
 LOGGER = logging.getLogger(__name__)
 
 EventSink = Callable[[dict[str, Any]], None]
+QueueRefill = Callable[[], Awaitable[bool]]
 
 
 @dataclass(slots=True)
@@ -53,6 +55,7 @@ class ScrubWorker:
         order_direction: str = ORDER_NEWEST,
         control: WorkerControl,
         event_sink: EventSink,
+        queue_refill: QueueRefill | None = None,
     ) -> None:
         start = perf_counter()
         session_deadline = datetime.now(UTC) + timedelta(hours=self._random_run_hours())
@@ -107,6 +110,14 @@ class ScrubWorker:
                             max_attempts=self.max_retries,
                             retry_failed_only=retry_failed_only,
                         ):
+                            if queue_refill and not control.stop_event.is_set():
+                                try:
+                                    refilled = await queue_refill()
+                                except Exception:  # pragma: no cover - defensive guard
+                                    LOGGER.exception("Queue refill callback failed")
+                                    refilled = False
+                                if refilled:
+                                    continue
                             completed = True
                             elapsed_seconds = int(perf_counter() - start)
                             event_sink(

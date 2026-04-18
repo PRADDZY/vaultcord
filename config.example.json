@@ -4,6 +4,7 @@
   "log_path": "~/.vaultcord/vaultcord.log",
   "request_timeout_seconds": 20.0,
   "max_retries": 3,
+  "batch_prepare_size": 1000,
   "scheduler": {
     "edit_delay_min_seconds": 15,
     "edit_delay_max_seconds": 25,

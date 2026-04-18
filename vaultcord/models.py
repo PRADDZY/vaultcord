@@ -24,6 +24,7 @@ class AppConfig:
     log_path: str
     request_timeout_seconds: float
     max_retries: int
+    batch_prepare_size: int = 1000
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
 
 
