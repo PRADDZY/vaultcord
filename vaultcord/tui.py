@@ -15,11 +15,11 @@ from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
 from prompt_toolkit.layout.containers import HSplit, VSplit
-from prompt_toolkit.layout.dimension import Dimension
+from prompt_toolkit.layout.scrollable_pane import ScrollablePane
 from prompt_toolkit.output import DummyOutput
 from prompt_toolkit.shortcuts import set_title
 from prompt_toolkit.styles import Style
-from prompt_toolkit.widgets import Box, Button, Checkbox, Frame, Label, RadioList, TextArea
+from prompt_toolkit.widgets import Button, Checkbox, Frame, Label, RadioList, TextArea
 
 from .constants import (
     MODE_ALL,
@@ -99,7 +99,7 @@ class VaultCordTUI:
         self.progress_label = Label(text="")
         self.completion_label = Label(text="")
         self.retrieval_label = Label(text="Retrieved: (none)")
-        self.help_label = Label(text="Shortcuts: s=start p=pause r=resume x=stop g=get i=server Esc=quit")
+        self.help_label = Label(text="Shortcuts: s p r x g i Esc")
         self.log_area = TextArea(
             text="",
             read_only=True,
@@ -126,7 +126,44 @@ class VaultCordTUI:
     def run(self) -> None:
         set_title("VaultCord")
         self._append_log("INFO", "Ready. Paste Server ID, choose mode/order, then press Start (s).")
-        self.application.run()
+        try:
+            self.application.run()
+        except Exception as exc:
+            message = str(exc).lower()
+            if "window too small" not in message:
+                raise
+            self._run_small_window_fallback()
+
+    def _run_small_window_fallback(self) -> None:
+        kb = KeyBindings()
+
+        @kb.add("q")
+        @kb.add("escape")
+        @kb.add("c-c")
+        def _exit(event: Any) -> None:
+            event.app.exit()
+
+        fallback = Application(
+            layout=Layout(
+                Frame(
+                    HSplit(
+                        [
+                            Label(text="Terminal window is too small for the full VaultCord dashboard."),
+                            Label(text="Resize the terminal and relaunch `vault tui`."),
+                            Label(text="Press Esc or q to exit."),
+                        ],
+                        padding=0,
+                    ),
+                    title="VaultCord",
+                    style="class:panel",
+                )
+            ),
+            key_bindings=kb,
+            style=self._build_style(),
+            full_screen=True,
+            mouse_support=True,
+        )
+        fallback.run()
 
     def _build_application(self) -> Application[Any]:
         kwargs: dict[str, Any] = {
@@ -144,36 +181,31 @@ class VaultCordTUI:
             return Application(**kwargs, input=DummyInput(), output=DummyOutput())
 
     def _build_root_container(self) -> HSplit:
-        top_bar = Frame(
-            body=HSplit(
-                [
-                    self.status_label,
-                    self.context_label,
-                ],
-                padding=0,
-            ),
-            title="VaultCord",
-            style="class:panel",
+        top_bar = HSplit(
+            [
+                self.status_label,
+                self.context_label,
+                self.help_label,
+            ],
+            padding=0,
         )
 
         control_body = HSplit(
             [
                 self.guild_input,
-                VSplit([self.start_button, self.pause_button, self.resume_button, self.stop_button], padding=1),
-                VSplit(
-                    [
-                        Frame(self.mode_list, title="Mode", style="class:panel"),
-                        Frame(self.order_list, title="Order", style="class:panel"),
-                    ],
-                    padding=1,
-                ),
-                VSplit([self.dry_run_checkbox, self.retry_only_checkbox], padding=3),
+                VSplit([self.start_button, self.pause_button], padding=1),
+                VSplit([self.resume_button, self.stop_button], padding=1),
+                Label(text="Mode"),
+                self.mode_list,
+                Label(text="Order"),
+                self.order_list,
+                self.dry_run_checkbox,
+                self.retry_only_checkbox,
                 self.vault_id_input,
                 self.get_button,
                 self.retrieval_label,
-                self.help_label,
             ],
-            padding=1,
+            padding=0,
         )
 
         telemetry_body = HSplit(
@@ -182,26 +214,26 @@ class VaultCordTUI:
                 self.progress_label,
                 self.completion_label,
             ],
-            padding=1,
+            padding=0,
         )
 
-        workspace = VSplit(
+        workspace = HSplit(
             [
-                Frame(Box(control_body, padding=1), title="Command Deck", style="class:panel"),
-                Frame(Box(telemetry_body, padding=1), title="Telemetry", style="class:panel"),
+                Frame(ScrollablePane(control_body, show_scrollbar=True), title="Command Deck", style="class:panel"),
+                Frame(telemetry_body, title="Telemetry", style="class:panel"),
             ],
-            padding=1,
+            padding=0,
         )
 
         logs = Frame(self.log_area, title="Event Console", style="class:panel")
 
         return HSplit(
             [
-                Box(top_bar, height=5, padding=0),
-                Box(workspace, height=Dimension(weight=2), padding=0),
-                Box(logs, height=Dimension(weight=3), padding=0),
+                Frame(top_bar, title="VaultCord", style="class:panel"),
+                workspace,
+                logs,
             ],
-            padding=1,
+            padding=0,
         )
 
     def _build_style(self) -> Style:
@@ -659,7 +691,7 @@ class VaultCordTUI:
             context += " | Dry Run"
         if self.retry_only_checkbox.checked:
             context += " | Retry Failed"
-        self.context_label.text = context
+        self.context_label.text = self._truncate_for_log(context, max_chars=max(24, self._log_width() - 14))
 
     def _refresh_status_widgets(self) -> None:
         self.status_label.text = f"Status: {self.status}"
@@ -676,7 +708,8 @@ class VaultCordTUI:
         filled = int((percent / 100.0) * bar_width)
         bar = "#" * filled + "-" * (bar_width - filled)
         self.progress_label.text = f"Progress: [{bar}] {percent}%"
-        self.completion_label.text = f"{self.completion_level}: {self.completion_message}"
+        completion = f"{self.completion_level}: {self.completion_message}"
+        self.completion_label.text = self._truncate_for_log(completion, max_chars=max(24, self._log_width() - 14))
 
         self.start_button.text = "Start" if self._button_enabled["start"] else "[Start]"
         self.pause_button.text = "Pause" if self._button_enabled["pause"] else "[Pause]"
