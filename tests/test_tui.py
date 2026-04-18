@@ -1,8 +1,5 @@
 from pathlib import Path
 
-import pytest
-from textual.widgets import Button, Checkbox, Input, RadioButton, RichLog, Static
-
 from vaultcord.constants import MODE_LINKS, ORDER_OLDEST
 from vaultcord.models import AppConfig, SchedulerConfig, VaultSession
 from vaultcord.service import VaultService
@@ -24,74 +21,58 @@ def build_tui(tmp_path: Path) -> VaultCordTUI:
     return VaultCordTUI(service=service, session=session, config=config)
 
 
-@pytest.mark.asyncio
-async def test_tui_focuses_server_id_on_mount(tmp_path: Path) -> None:
+def test_tui_has_interactive_controls(tmp_path: Path) -> None:
     app = build_tui(tmp_path)
-    async with app.run_test():
-        guild_input = app.query_one("#guild-id", Input)
-        assert app.focused is guild_input
+    assert app.guild_input is not None
+    assert app.start_button is not None
+    assert app.pause_button is not None
+    assert app.resume_button is not None
+    assert app.stop_button is not None
+    assert app.mode_list.current_value == "all"
+    assert app.order_list.current_value == "newest"
 
 
-@pytest.mark.asyncio
-async def test_tui_core_controls_are_visible(tmp_path: Path) -> None:
+def test_tui_persists_mode_and_order_preferences(tmp_path: Path) -> None:
     app = build_tui(tmp_path)
-    async with app.run_test():
-        assert app.query_one("#start", Button)
-        assert app.query_one("#pause", Button)
-        assert app.query_one("#resume", Button)
-        assert app.query_one("#stop", Button)
-        assert app.query_one("#mode-selector")
-        assert app.query_one("#order-selector")
-        assert app.query_one("#dry-run", Checkbox)
-        assert app.query_one("#retry-only", Checkbox)
-        assert app.query_one("#logs", RichLog)
-
-
-@pytest.mark.asyncio
-async def test_tui_persists_mode_and_order_preferences(tmp_path: Path) -> None:
-    app = build_tui(tmp_path)
-    async with app.run_test():
-        app.selected_mode = MODE_LINKS
-        app.selected_order = ORDER_OLDEST
-        app._save_tui_preferences()
+    app.mode_list.current_value = MODE_LINKS
+    app.order_list.current_value = ORDER_OLDEST
+    app._save_tui_preferences()
 
     restored = build_tui(tmp_path)
-    async with restored.run_test():
-        assert restored.selected_mode == MODE_LINKS
-        assert restored.selected_order == ORDER_OLDEST
-        assert restored.query_one("#mode-links", RadioButton).value
-        assert restored.query_one("#order-oldest", RadioButton).value
+    assert restored.mode_list.current_value == MODE_LINKS
+    assert restored.order_list.current_value == ORDER_OLDEST
 
 
-@pytest.mark.asyncio
-async def test_tui_shows_success_completion_banner(tmp_path: Path) -> None:
+def test_tui_shows_success_completion_banner(tmp_path: Path) -> None:
     app = build_tui(tmp_path)
-    async with app.run_test():
-        app._handle_completed(
-            {
-                "done": 93,
-                "failed": 0,
-                "remaining": 0,
-                "elapsed_seconds": 120,
-            }
-        )
-        banner = app.query_one("#completion-banner", Static)
-        assert "all queued messages archived and replaced" in str(banner.render())
-        assert banner.has_class("is-success")
-        assert "Completed" in str(app.query_one("#status-chip", Static).render())
+    app._handle_completed(
+        {
+            "done": 93,
+            "failed": 0,
+            "remaining": 0,
+            "elapsed_seconds": 120,
+        }
+    )
+    assert "all queued messages archived and replaced" in app.completion_message
+    assert app.completion_level == "OK"
+    assert app.status == "Completed"
 
 
-def test_render_log_truncates_and_keeps_columns(tmp_path: Path) -> None:
+def test_log_line_truncates_and_keeps_columns(tmp_path: Path) -> None:
     app = build_tui(tmp_path)
-    line = app._render_log("INFO", "x" * 500, max_width=68)
-    assert line.plain.count("|") == 2
-    assert "\n" not in line.plain
-    assert len(line.plain) <= 68
+    line = app._format_log_line(level="INFO", message="x" * 500, max_width=68)
+    assert line.count("|") == 2
+    assert "\n" not in line
+    assert len(line) <= 68
 
 
-def test_compact_layout_switches_by_width(tmp_path: Path) -> None:
+def test_status_transitions_control_buttons(tmp_path: Path) -> None:
     app = build_tui(tmp_path)
-    app._update_layout_mode(120)
-    assert app.has_class("-compact")
-    app._update_layout_mode(220)
-    assert not app.has_class("-compact")
+    app._set_status("running")
+    assert app._button_enabled["pause"]
+    assert app._button_enabled["stop"]
+    assert not app._button_enabled["start"]
+    app._set_status("paused")
+    assert app._button_enabled["resume"]
+    assert app._button_enabled["stop"]
+    assert not app._button_enabled["pause"]

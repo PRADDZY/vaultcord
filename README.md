@@ -6,7 +6,7 @@ It encrypts message data locally, replaces the original Discord content with a v
 
 ## Features
 
-- Textual TUI dashboard with live progress, logs, and worker controls
+- Prompt-toolkit TUI dashboard with live progress, logs, and worker controls
 - TUI-side vault retrieval by `vault_id` without leaving the dashboard
 - Modular backend components (`scraper`, `worker`, `security`, `editor`)
 - BYOT authentication (`vault login`) with encrypted token storage
@@ -107,9 +107,9 @@ vault tui
 
 TUI start flow:
 
-- Use the top **Command Strip** for `Guild ID`, mode, order, and run controls
-- Use **Command Deck** (left) for `vault_id` retrieval
-- Monitor **Telemetry** (right) and **Event Console** (bottom) live during execution
+- Use the dashboard controls for `Guild ID`, mode, order, and run actions
+- Use the retrieval section for `vault_id` lookup
+- Monitor telemetry and event console panels live during execution
 
 When work finishes, TUI now shows an explicit completion message with processed/failed/elapsed stats.
 

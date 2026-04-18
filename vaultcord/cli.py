@@ -258,7 +258,7 @@ def get(vault_id: str) -> None:
 
 @app.command()
 def tui() -> None:
-    """Launch interactive Textual dashboard."""
+    """Launch interactive prompt-toolkit dashboard."""
     try:
         runtime = build_runtime()
         password = typer.prompt("Vault password", hide_input=True)
