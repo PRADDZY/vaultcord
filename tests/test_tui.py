@@ -1,4 +1,5 @@
 from pathlib import Path
+from unittest.mock import patch
 
 from vaultcord.constants import MODE_LINKS, ORDER_OLDEST
 from vaultcord.models import AppConfig, SchedulerConfig, VaultSession
@@ -76,3 +77,18 @@ def test_status_transitions_control_buttons(tmp_path: Path) -> None:
     assert app._button_enabled["resume"]
     assert app._button_enabled["stop"]
     assert not app._button_enabled["pause"]
+
+
+def test_tui_can_insert_text_into_focused_inputs(tmp_path: Path) -> None:
+    app = build_tui(tmp_path)
+    with patch.object(
+        app.application.layout, "has_focus", side_effect=lambda widget: widget is app.guild_input
+    ):
+        app._insert_into_focused_input("123456789")
+    assert app.guild_input.text.endswith("123456789")
+
+    with patch.object(
+        app.application.layout, "has_focus", side_effect=lambda widget: widget is app.vault_id_input
+    ):
+        app._insert_into_focused_input("vault://abc")
+    assert app.vault_id_input.text.endswith("vault://abc")

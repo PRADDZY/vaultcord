@@ -11,6 +11,7 @@ from time import monotonic
 from typing import Any
 
 from prompt_toolkit.application import Application
+from prompt_toolkit.filters import Condition
 from prompt_toolkit.input import DummyInput
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.layout import Layout
@@ -99,7 +100,7 @@ class VaultCordTUI:
         self.progress_label = Label(text="")
         self.completion_label = Label(text="")
         self.retrieval_label = Label(text="Retrieved: (none)")
-        self.help_label = Label(text="Shortcuts: s p r x g i Esc")
+        self.help_label = Label(text="Shortcuts: s p r x g i v Esc | Paste: Ctrl+V")
         self.log_area = TextArea(
             text="",
             read_only=True,
@@ -255,6 +256,8 @@ class VaultCordTUI:
 
     def _build_keybindings(self) -> KeyBindings:
         kb = KeyBindings()
+        not_input_focus = Condition(lambda: not self._text_input_focused())
+        input_focus = Condition(self._text_input_focused)
 
         @kb.add("tab")
         def _focus_next(event: Any) -> None:
@@ -264,30 +267,49 @@ class VaultCordTUI:
         def _focus_previous(event: Any) -> None:
             event.app.layout.focus_previous()
 
-        @kb.add("s")
+        @kb.add("s", filter=not_input_focus)
         def _start(_: Any) -> None:
             self._on_start_pressed()
 
-        @kb.add("p")
+        @kb.add("p", filter=not_input_focus)
         def _pause(_: Any) -> None:
             self._on_pause_pressed()
 
-        @kb.add("r")
+        @kb.add("r", filter=not_input_focus)
         def _resume(_: Any) -> None:
             self._on_resume_pressed()
 
-        @kb.add("x")
+        @kb.add("x", filter=not_input_focus)
         def _stop(_: Any) -> None:
             self._on_stop_pressed()
 
-        @kb.add("g")
+        @kb.add("g", filter=not_input_focus)
         def _get(_: Any) -> None:
             self._on_get_pressed()
 
-        @kb.add("i")
+        @kb.add("i", filter=not_input_focus)
         def _focus_server(event: Any) -> None:
             event.app.layout.focus(self.guild_input)
             self._append_log("INFO", "Server ID input focused")
+
+        @kb.add("v", filter=not_input_focus)
+        def _focus_vault_id(event: Any) -> None:
+            event.app.layout.focus(self.vault_id_input)
+            self._append_log("INFO", "Vault ID input focused")
+
+        @kb.add("c-v", filter=input_focus)
+        @kb.add("s-insert", filter=input_focus)
+        def _paste_clipboard(event: Any) -> None:
+            try:
+                data = event.app.clipboard.get_data()
+                text = str(data.text) if data and data.text is not None else ""
+            except Exception:
+                text = ""
+            self._insert_into_focused_input(text)
+
+        @kb.add("<bracketed-paste>", filter=input_focus)
+        def _paste_bracketed(event: Any) -> None:
+            self._insert_into_focused_input(str(getattr(event, "data", "") or ""))
 
         @kb.add("escape")
         def _escape(_: Any) -> None:
@@ -303,6 +325,26 @@ class VaultCordTUI:
         self._drain_events()
         self._update_context_label()
         self._refresh_status_widgets()
+
+    def _text_input_focused(self) -> bool:
+        try:
+            layout = self.application.layout
+            return layout.has_focus(self.guild_input) or layout.has_focus(self.vault_id_input)
+        except Exception:
+            return False
+
+    def _insert_into_focused_input(self, text: str) -> None:
+        if not text:
+            return
+        try:
+            layout = self.application.layout
+            if layout.has_focus(self.guild_input):
+                self.guild_input.text = f"{self.guild_input.text}{text}"
+                return
+            if layout.has_focus(self.vault_id_input):
+                self.vault_id_input.text = f"{self.vault_id_input.text}{text}"
+        except Exception:
+            return
 
     def _drain_events(self) -> None:
         while True:
